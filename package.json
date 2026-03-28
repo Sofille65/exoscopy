@@ -1,0 +1,18 @@
+{
+  "name": "exoscopy",
+  "version": "1.0.0",
+  "description": "ExoScopy — EXO Cluster Dashboard. Monitor, load models, chat and benchmark your distributed Apple Silicon inference cluster.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.4"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.29.2"
+  }
+}
