@@ -1,8 +1,8 @@
 # ExoScopy — Product Description
 ## Complete UX/UI Reference Document
 
-> Version 1.0 — 2026-03-28
-> For UX/UI design work (Stitch)
+> Version 1.1 — 2026-04-04
+> For UX/UI design work (Paper)
 
 ---
 
@@ -10,11 +10,13 @@
 
 **ExoScopy** is a web-based cluster dashboard for [exo](https://github.com/exo-explore/exo) — the open-source framework that turns a network of Apple Silicon Macs into a unified distributed AI inference engine.
 
-**The problem it solves**: exo has no management UI. Users running multi-node clusters (2–8 Mac Studios, Mac Minis, MacBook Pros) have no way to visualize their topology, see live metrics, load/unload models, or run benchmarks without SSH and CLI tools.
+**The problem it solves**: exo is a powerful inference framework with a minimal debug-style dashboard (monospace yellow/black). Users running multi-node clusters have no real product-grade UI to manage their cluster, chat with models, or handle model distribution.
 
-**The solution**: ExoScopy is a zero-configuration dashboard that auto-discovers exo nodes on the local network, displays the cluster as a live topological map, and provides all cluster management operations through a clean UI.
+**The solution**: ExoScopy is a zero-configuration dashboard that auto-discovers exo nodes on the local network, provides a clean product-quality interface for chat, monitoring, and model management — including downloading models from HuggingFace and distributing them across nodes via LAN.
 
 **Tagline**: *See your cluster. Run your models.*
+
+**Design benchmark**: Inferencer Pro (native macOS app on App Store) — clean, readable, professional. ExoScopy aims for that level of polish as a web app.
 
 ---
 
@@ -28,7 +30,7 @@
 
 ### Secondary: Prosumer / Studio Operators
 - Small AI studios with dedicated Mac Studio racks
-- Need: uptime monitoring, model management workflow, benchmarking for model selection
+- Need: uptime monitoring, model management workflow
 - Value: professional dashboard, shareable metrics
 
 ### Tertiary: exo contributors / community
@@ -40,39 +42,36 @@
 ## 3. Core Principles
 
 1. **Zero config by default** — auto-discovery on first launch, no config file to hand-edit
-2. **EXO-native** — exposes exo's own API concepts (instances, sharding, RDMA) directly, no abstraction layer
-3. **Live by default** — everything updates in real time (10s polling + Socket.IO for downloads)
-4. **Single-page, modal-based** — all panels are modals over a persistent dashboard; no navigation/routing
-5. **Dark, dense, technical** — designed for power users who keep it open in a side monitor
+2. **EXO-native** — exposes exo's own API concepts (instances, sharding, RDMA) directly
+3. **Live by default** — everything updates in real time (10s polling + Socket.IO for downloads/sync)
+4. **Light, clean, readable** — inspired by Inferencer Pro; white background, good typography, professional feel
+5. **Real navigation** — proper page routing with persistent nav, not modals stacked on a dashboard
 
 ---
 
 ## 4. Application Structure
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Header bar (persistent)                                 │
-│  [ExoScopy logo] [v1.0.0]    [⚡][📚][💬][⬇][⚙]        │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  Dashboard (main view)                                   │
-│  ┌──────────┐  ┌──────────────────────────────────────┐ │
-│  │  Source   │  │  Nodes                               │ │
-│  │  card     │  │  [node1] [node2] [node3] [node4]     │ │
-│  │           │  │  model list per node                 │ │
-│  └──────────┘  └──────────────────────────────────────┘ │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
+### Navigation
 
-Modals (z-layered, open over dashboard):
-  ⊞ Monitoring  —  Space View + Grid View
-  ⚡ Benchmark
-  📚 Catalogue
-  💬 Chat
-  ⬇ Downloads
-  🔍 Hub Search
-  ⚙ Settings + Setup Wizard
+Persistent top or side navigation bar with page routing:
+
 ```
+[ExoScopy logo] [v1.0.0]                    [cluster status badge]
+
+[Dashboard]  [Chat]  [Models]  [Downloads]  [Settings]
+```
+
+Each nav item leads to a full-page view. Active page highlighted.
+
+### Pages
+
+| Page | Purpose |
+|------|---------|
+| **Dashboard** | Cluster overview — Space View, node status, active model |
+| **Chat** | Chat with models via exo API |
+| **Models** | Models installed per node, sync between nodes, HF search & download |
+| **Downloads** | Active downloads, queue, distribution progress |
+| **Settings** | Node config, SSH, endpoints, setup wizard |
 
 ---
 
@@ -80,338 +79,265 @@ Modals (z-layered, open over dashboard):
 
 ---
 
-### 5.1 Header Bar
+### 5.1 Navigation Bar
 
-**Always visible.** Fixed top bar, dark background.
+**Always visible.** Persistent across all pages.
 
 **Left side:**
 - ExoScopy logo/wordmark
 - Version badge (`v1.0.0`, small, muted)
-- Cluster health badge: `N/M nodes active` (green = all active, yellow = partial, red = none)
 
-**Right side — icon buttons (left to right):**
-| Icon | Label | Opens |
-|------|-------|-------|
-| ⚡ | Benchmark | BenchmarkPanel modal |
-| 📚 | Catalogue | CataloguePanel modal |
-| 💬 | Chat | ChatPanel modal |
-| ⬇ | Downloads | DownloadPanel modal — badge with active count |
-| 🔍 | Hub | HubSearchPanel modal |
-| 👁 | Monitoring | MonitoringPanel modal |
-| ⚙ | Settings | SettingsPanel modal |
+**Center or left — page links:**
+- Dashboard, Chat, Models, Downloads, Settings
+- Active page highlighted
+- Downloads: badge with active count when downloads running
 
-**Download badge**: When downloads are active, a count badge appears on the ⬇ button.
+**Right side:**
+- Cluster health badge: `N/M nodes online` (green = all, yellow = partial, red = none)
+- Active model indicator: `⚡ ModelName` when a model is loaded
+- Link to exo dashboard (`↗`) — opens exo's native web UI
 
 ---
 
-### 5.2 Dashboard (Main View)
+### 5.2 Dashboard Page
 
-The persistent background view. Always visible behind modals.
+The home page. Cluster overview at a glance.
 
-#### 5.2.1 Source Card (left)
-Represents the model storage source (the machine that holds the master copy of models).
+#### 5.2.1 Space View (primary)
 
-- Node name + IP
-- Online/offline indicator
-- Disk used / total (progress bar)
-- List of models stored (name, size, format badge)
-- **Sync button** per model → distribute to selected nodes
+**The signature feature of ExoScopy.** SVG topology visualization showing cluster status.
 
-#### 5.2.2 Node Cards (right, grid)
-One card per EXO node. 2–4 columns depending on node count.
-
-Each card contains:
-- Node name (e.g. "ultra-512") + IP
-- RAM badge (e.g. "512 GB")
-- Status pill: `EXO running` (green) / `EXO stopped` (yellow) / `Offline` (red)
-- RAM usage bar (used/total %)
-- List of models on this node
-  - Name, size
-  - `⚡` badge if currently loaded/active
-- Per-model action: sync from source / remove
-
----
-
-### 5.3 Monitoring Panel
-
-Full-screen modal. Header with env tabs (EXO only in v1), status badge, action buttons.
-
-**Header bar:**
-- `EXO` tab (active/only tab in v1)
-- Status badge: `4/4 active` / `2/4 active` / `0/4 active`
-- `Auto-refresh` toggle (10s interval)
-- `▶ Start All` / `■ Stop All` / `🗑 Purge instances` buttons
-- `⊕ Load Model` button
-- `EXO Dashboard ↗` external link to exo's native web UI
-- `◈ Space / ⊞ Grid` view toggle
-- `Refresh` button + `✕` close
-
-**Active Instance Strip** (below header, visible when model loaded):
-```
-⚡ ModelName  [4n]  [×]
-```
-Shows currently loaded model, node count, unload button.
-
-#### 5.3.1 Grid View (default)
-
-Node card grid (2–4 columns).
-
-Each node card shows:
-- Node name + IP
-- Status indicator (color dot + text)
-- RAM bar: `used GB / total GB (pct%)`
-- `▶ Start` / `■ Stop` button per node
-- `ⓘ` info button → node detail modal
-
-#### 5.3.2 Space View
-
-**The signature feature of ExoScopy.** SVG diamond topology visualization.
-
-- 4 nodes arranged in a diamond (top, left, right, bottom)
-- **Connection lines** between all node pairs:
+- **Dynamic node layout** — adapts to 2–8 nodes (diamond for 4, line for 2, grid for more)
+- **Connection lines** between node pairs:
   - Indigo solid = RDMA active (both nodes running)
-  - Gray solid = RDMA available (both online, not running)
-  - Dark dashed = Inactive
+  - Gray solid = available (both online, not running)
+  - Dark dashed = inactive
 - **Node circles** (R=34):
   - Border color: green (running) / yellow (online, stopped) / red (offline)
-  - **Glow effect**: green radial blur when running
-  - Center: node short name (e.g. "512", "256a")
-  - Below name: RAM percentage (color-coded)
-  - Below circle: IP address
-  - Below IP: `GPU X% · XX° · XXXW` (from /state metrics)
-  - RAM bar (mini progress bar)
-- **Legend** (vertical, bottom-left): RDMA actif / RDMA dispo / Inactif
+  - **Glow effect**: green radial blur when running (`feGaussianBlur stdDeviation=9`, opacity 0.45)
+  - Center: node short name
+  - Below: RAM%, IP, GPU% · temp° · watts
+- **Legend**: connection types
+- **Active model strip**: `⚡ ModelName [Nn] [× Unload]` when a model is loaded
 
-#### 5.3.3 Load Model Form
+Focus: **status visibility**. For advanced topology configuration, link to exo's native dashboard.
 
-Inline form (appears below the active instance strip when Load Model is clicked):
-- Dropdown: model selection (intersection of models present on ALL EXO nodes)
-  - Shows model short name, format badge
-  - `⚡` prefix if currently active
-- Sharding toggle: `Tensor` / `Pipeline` (Tensor recommended)
-- `Load` button (primary) / `Cancel`
+#### 5.2.2 Node Cards (below Space View)
 
-#### 5.3.4 Node Info Modal
-
-Sub-modal (z-layer above Monitoring):
-- Node name, IP, RAM
-- SSH connection status
-- Disk usage
-- EXO process details (PID, uptime if available)
-- Model files present
+Compact cards for each node, showing:
+- Node name + IP
+- Status pill: `Online` (green) / `Stopped` (yellow) / `Offline` (red)
+- RAM usage bar (used/total %)
+- GPU% / Temperature / Power
+- Model count on this node
 
 ---
 
-### 5.4 Chat Panel
+### 5.3 Chat Page
 
-Full-screen modal. Three-column layout.
+Full-page chat interface. Two-column layout.
 
 #### Layout:
 ```
-┌──────────────┬────────────────────────────┬────────────────┐
-│ Sidebar      │ Messages                   │ [collapsed by  │
-│              │                            │  default]      │
-│ Conversations│ [message bubbles]          │                │
-│ list         │                            │                │
-│              │                            │                │
-│ + New        │ [input bar]                │                │
-└──────────────┴────────────────────────────┴────────────────┘
+┌──────────────┬──────────────────────────────────────────┐
+│ Sidebar      │ Messages                                 │
+│              │                                          │
+│ Conversations│ [message thread with streaming]           │
+│ list         │                                          │
+│              │                                          │
+│ [+ New]      │ [model selector] [params] [input bar]    │
+└──────────────┴──────────────────────────────────────────┘
 ```
 
-#### Engine/Model bar (top of messages column):
+#### Model bar (top of messages):
 ```
-[EXO ▾] [ModelName ▾] [Params ▾] [ℹ]
+[ModelName ▾]  [Presets: Creative | Normal | Code]  [Params ▾]
 ```
-- Engine selector: one button per configured chat endpoint
-- Model selector: dropdown of models on disk (⚡ = active model)
+- Model selector: dropdown of models on disk (⚡ = active/loaded model)
+- Presets: one-click parameter sets
 - Params panel (collapsible):
 
-**Params — Row 1 (all engines):**
+**Params — Row 1:**
 - Temperature (slider 0–2, default 0.7)
 - Max tokens (input, default 32768)
 - Thinking toggle (ON/OFF)
 - Reasoning effort (none/minimal/low/medium/high/xhigh) — visible when thinking ON
 
-**Params — Row 2 (exo-specific, indigo badge):**
+**Params — Row 2 (exo-specific):**
 - top_p (0–1)
 - top_k (int)
 - min_p (0–0.5)
-- Repetition penalty (1–2)
+- Repetition penalty (1–2) — always paired with repetition_context_size
 - Seed (int, optional)
 
-**ℹ Help panel**: inline description of each parameter.
+**System prompt**: textarea with ON/OFF toggle, persisted in settings.
 
-#### Message bubbles:
-- User: right-aligned, darker background
-- Assistant: left-aligned, lighter background, Markdown rendered
-- Thinking blocks (`<think>...</think>`): collapsible, muted style, italic
+#### Messages:
+- User: right-aligned or distinct background
+- Assistant: left-aligned, Markdown rendered (via marked.js local)
+- Thinking blocks (`<think>...</think>`): collapsible, muted style
 - Streaming: animated cursor during generation
+- Per-message stats: TTFT, speed (tk/s), token count
+- Edit button on user messages → multi-turn editing (truncate + regenerate)
 
 #### Input bar:
 - Text area (auto-resize)
-- 📎 Attach file button
-- File badge (name + size + ✕) when attached
-- Send button (disabled when empty, unless file attached)
+- 📎 Attach files (multi-file support)
+- File badges (name + size + ✕) when attached
+- Send button (active if text or file attached)
 
 #### Sidebar:
 - Conversations list (pinned first, then by date)
 - Per-conversation: title, last message preview, timestamp
-- Right-click / hover actions: rename, pin/unpin, delete
+- Actions: rename, pin/unpin, delete, export (Markdown / JSON)
 - `+ New conversation` button
+- Search conversations
+
+#### Save code blocks:
+- 💾 button per code block in assistant responses
+- 📦 Save all (.zip) when multiple code blocks
 
 ---
 
-### 5.5 Download Panel
+### 5.4 Models Page
 
-Modal (max-w-3xl). Shows active downloads, queued downloads, and history.
+Full-page model management. **The operational hub for model distribution.**
 
-#### Sections:
+#### 5.4.1 Model Matrix
 
-**Active Downloads** (status = 'downloading'):
-- Model name
+Table/grid showing models × nodes:
+
+```
+Model                    | Node A    | Node B    | Node C    | Node D
+─────────────────────────|───────────|───────────|───────────|──────────
+Qwen3.5-397B-9bit (415GB)| ✓ 415GB  | ✓ 415GB   | ✓ 415GB   | ✗ —
+DeepSeek-V3.2-8bit       | ✓ 704GB  | ✓ 704GB   | ✓ 704GB   | ✓ 704GB
+Kimi-K2.5 (612GB)        | ✓ 612GB  | ✗ —       | ✗ —       | ✗ —
+```
+
+- ✓ = installed (with size), ✗ = not installed
+- ⚡ badge on currently loaded/active model
+- Per-node: disk free shown in column header
+
+#### 5.4.2 Model Actions
+
+Per-model row actions:
+- **Sync** → distribute from a node that has it to nodes that don't (rsync via SSH)
+- **Delete** → remove from selected nodes
+- **Load** → load on cluster (sharding strategy: Tensor/Pipeline)
+- **Unload** → purge instance
+
+Sync action opens inline detail:
+- Source node (auto-selected: first node that has it)
+- Target nodes (checkboxes, pre-checked: nodes that don't have it)
+- `▶ Start sync` button
+- Progress per target node (from Socket.IO events)
+
+#### 5.4.3 Download New Model
+
+Button or section to search and download from HuggingFace:
+
+- **Search bar**: text input + format filter (MLX / GGUF / All) + sort
+- **Results**: model cards with name, format, quant, size estimate, downloads count
+- **Download action**: choose target node → start download → appears in Downloads page
+- After download completes on one node → option to sync to other nodes
+
+#### 5.4.4 Node Storage Summary
+
+Per-node storage info:
+- Disk used / total / free
+- Model count
+- Largest model
+
+---
+
+### 5.5 Downloads Page
+
+Full-page view of download and distribution activity.
+
+#### Active Downloads (status = 'downloading'):
+- Model name + HF repo link
+- Target node
 - Progress bar (downloaded / total GB, percentage)
 - Speed (MB/s)
 - Files remaining count
 - `■ Stop` button
 
-**Queued** (status = 'queued'):
+#### Distribution (status = 'distributing'):
+- Model name
+- Source node → target nodes
+- Progress per target node
+- Speed (MB/s)
+
+#### Queued (status = 'queued'):
 - Model name
 - Position in queue (#1, #2...)
 - `✕ Cancel` button
 
-**Completed / History** (status = done/stopped/error):
+#### History (status = done/stopped/error):
 - Model name
-- Status badge (✓ Terminé / ⚠ Arrêté / ✕ Erreur)
-- `↺ Restart` (if stopped/error) / `🗑 Delete` (removes from list)
+- Status badge (✓ Done / ⚠ Stopped / ✕ Error)
+- `↺ Restart` (if stopped/error) / `🗑 Remove`
 
-**Empty state**: "No downloads. Search HuggingFace to find models →"
+**Queue info**: "N/3 slots used" badge.
 
-Queue info: "3/3 slots used" badge when full.
-
----
-
-### 5.6 Hub Search Panel
-
-Modal. Search HuggingFace for models to download.
-
-**Search bar**: text input + format filter (MLX / GGUF / All) + sort (downloads / likes / recent)
-
-**Results list** (cards):
-Each card:
-- Model ID (e.g. `mlx-community/Qwen3-Coder-480B-8bit`)
-- Author + model name
-- Format badge (MLX / GGUF / safetensors)
-- Quantization badge (8-bit / 4-bit / BF16 / FP16...)
-- Parameter count (e.g. 72B, 397B)
-- Estimated size (e.g. 42.3 GB)
-- Downloads count (M/K)
-- `⬇ Download` button → triggers download with env selection
-- `🔗` External link to HuggingFace model page
-
-**Download dialog** (appears inline on click):
-- Target: always EXO (v1)
-- Confirm button
+**Empty state**: "No downloads. Go to Models to search HuggingFace →"
 
 ---
 
-### 5.7 Catalogue Panel
+### 5.6 Settings Page
 
-Modal. Curated list of recommended models for exo, organized by category.
+Full-page settings with sections.
 
-**Filters bar**: env (EXO), tags (multiselect: coding, reasoning, creative, multilingual, vision...)
+#### 5.6.1 First-Run Setup Wizard
 
-**Model cards** (compact list):
-- Model name + short description
-- Format / quant badge
-- Size estimate
-- Tags
-- `⬇ Download` button
-- `🔍 View on HF` link
-
-**Categories** (visual dividers):
-- Best overall
-- Best for coding
-- Best for reasoning / thinking
-- Fast (optimized for speed)
-- Large (flagship quality)
-
----
-
-### 5.8 Benchmark Panel
-
-Modal (compact, max-w-lg).
-
-**Purpose**: Measure inference speed (TTFT + tokens/second) on the connected EXO cluster.
-
-**Display:**
-- Current model (auto-detected from /state, ⚡ badge)
-- Prompt preview (fixed test prompt, 200-word creative writing task)
-- Config summary: `400 tokens max · engine exo1 · streaming`
-
-**Before run:**
-- `▶ Lancer le benchmark` button
-
-**During run (live metrics):**
-- Tokens generated (count)
-- Elapsed time (seconds, updates every 200ms)
-- Speed (tok/s, live)
-- Animated progress indicator
-
-**After run (results grid):**
-- Tokens/sec (large, green)
-- Time to first token — TTFT (amber)
-- Total tokens (indigo)
-- Total time (gray)
-- `↺ Relancer` button
-
----
-
-### 5.9 Settings Panel
-
-Modal. Two main sections: cluster configuration + advanced.
-
-#### 5.9.1 First-Run Setup Wizard
-
-Shown when `setupComplete = false`. Full-screen overlay.
+Shown when `setupComplete = false`. Full-page overlay.
 
 **Step 1 — Welcome**
 - ExoScopy logo
-- "Bienvenue dans ExoScopy"
+- "Welcome to ExoScopy"
 - Brief description
-- `→ Configurer mon cluster` button
+- `→ Set up my cluster` button
 
 **Step 2 — Node Discovery**
-- "Recherche des nodes exo sur votre réseau..."
+- "Scanning for exo nodes on your network..."
 - Animated scan indicator
-- Results list: discovered nodes with IP, port, reachable indicator, model count
-- `+ Ajouter manuellement` (manual IP entry)
-- `→ Continuer` once at least 1 node selected
+- Results: discovered nodes with IP, port, reachable status, model count
+- `+ Add manually` (manual IP entry)
+- `→ Continue` once at least 1 node selected
 
-**Step 3 — Validation**
-- Summary of selected nodes
-- SSH connectivity check (✓ or ✗ per node)
-- `✓ Terminer la configuration` button
+**Step 3 — SSH Setup**
+- Guide for enabling SSH on each node (macOS: System Settings → Remote Login)
+- SSH key generation or selection
+- Test connectivity per node (✓ or ✗)
+- `✓ Complete setup` button
 
-#### 5.9.2 Settings (ongoing)
+#### 5.6.2 Settings (ongoing)
 
-**Section: Nodes EXO**
-- Table of configured nodes: name, IP, RAM, actions (edit, remove)
-- `+ Add node` button (name + IP + RAM fields)
-- `🔍 Redétecter` button (re-run LAN discovery)
+**Section: EXO Nodes**
+- Table of configured nodes: name, IP, RAM, status, actions (edit, remove)
+- `+ Add node` button
+- `🔍 Re-discover` button (re-scan LAN)
 
-**Section: Chat Endpoints**
-- List of chat endpoints (maps to `settings.chat`)
-- Per endpoint: name, IP, port, `Test` button (checks /v1/models response)
-- `+ Add endpoint` button
+**Section: EXO Endpoint**
+- IP + port for the exo API (default: first discovered node, port 52415)
+- `Test` button (checks /v1/models response)
 
 **Section: SSH**
-- SSH user (default: admin)
-- SSH key path (default: /root/.ssh/id_ed25519)
+- SSH user
+- SSH key path
+- Test connectivity button per node
+
+**Section: System Prompt**
+- Textarea for default system prompt
+- ON/OFF toggle
+- Applied to all new conversations
 
 **Section: About**
 - Version
 - Link to GitHub
 - Link to exo GitHub
+- Link to exo dashboard
 
 ---
 
@@ -419,36 +345,34 @@ Shown when `setupComplete = false`. Full-screen overlay.
 
 ### 6.1 First-Run Setup
 ```
-Open ExoScopy → Setup Wizard → Scan LAN → Select nodes → SSH check → Done → Dashboard
+Open ExoScopy → Setup Wizard → Scan LAN → Select nodes → SSH setup → Done → Dashboard
 ```
 
 ### 6.2 Load a Model
 ```
-Monitoring → Space View → "Load Model" → Select model → Tensor/Pipeline → Load
-→ Space View updates: glow appears on nodes → ⚡ badge in header
+Dashboard → see cluster status → Load Model → Select model → Tensor/Pipeline → Load
+→ Space View: glow appears on nodes → ⚡ badge in nav
 ```
 
 ### 6.3 Chat with Active Model
 ```
-Chat button → Chat panel → Model auto-selected (⚡ current) → Type message → Send
+Nav → Chat → Model auto-selected (⚡ current) → Type message → Send
 → Stream tokens → Markdown rendered → Conversation saved
 ```
 
-### 6.4 Download a New Model
+### 6.4 Download and Distribute a New Model
 ```
-Hub Search → search "qwen3" → filter MLX → find model → ⬇ Download
-→ Download panel shows progress → queue if 3 active → auto-start when slot free
-```
-
-### 6.5 Benchmark
-```
-Load model in Space View → ⚡ Benchmark button → Launch → See live tok/s → Compare
+Nav → Models → Search HF "qwen3" → filter MLX → Download to Node A
+→ Nav → Downloads → see progress → download complete
+→ Nav → Models → see model on Node A only → Sync → select other nodes → Start
+→ rsync distributes via LAN → all nodes have model → ready to load
 ```
 
-### 6.6 Monitor Cluster Health
+### 6.5 Monitor Cluster Health
 ```
-Monitoring → Space View → see GPU%/temp/watts per node → glow = active
-→ Connections: indigo = RDMA active, if line missing = node offline
+Nav → Dashboard → Space View → see GPU%/temp/watts per node
+→ glow = running, connections show RDMA status
+→ need more detail? → click "exo dashboard ↗" link
 ```
 
 ---
@@ -464,12 +388,14 @@ Monitoring → Space View → see GPU%/temp/watts per node → glow = active
     { "name": "ultra-512", "ip": "192.168.1.10", "ram": "512 GB" },
     { "name": "ultra-256a", "ip": "192.168.1.11", "ram": "256 GB" }
   ],
-  "exoPort": 52415,
+  "exoEndpoint": { "ip": "192.168.1.10", "port": 52415 },
   "chat": {
-    "exo1": { "name": "EXO", "ip": "192.168.1.10", "port": 52415 }
+    "exo": { "name": "EXO", "ip": "192.168.1.10", "port": 52415 }
   },
   "sshUser": "admin",
-  "sshOpts": "..."
+  "sshKeyPath": "/root/.ssh/id_ed25519",
+  "systemPrompt": "",
+  "systemPromptEnabled": false
 }
 ```
 
@@ -478,7 +404,7 @@ Monitoring → Space View → see GPU%/temp/watts per node → glow = active
 - Survives Docker restarts (in-progress → restored as stopped)
 
 ### Conversations (persisted in `data/conversations.json`)
-- Full message history
+- Full message history per conversation
 - Sorted: pinned first, then by updatedAt
 
 ### Runtime (in-memory only)
@@ -491,49 +417,48 @@ Monitoring → Space View → see GPU%/temp/watts per node → glow = active
 
 ## 8. API Endpoints
 
-### Settings
+### Settings & Discovery
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/settings` | Current settings |
 | PUT | `/api/settings` | Save settings |
 | GET | `/api/discover` | Scan LAN for EXO nodes on port 52415 |
 
-### Cluster State
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/state` | Full cluster state (sources + nodes + models) |
-| GET | `/api/nodes` | Node list with models |
-
 ### Monitoring
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/monitoring/status` | Node status (online, processRunning) |
+| GET | `/api/monitoring/status` | Node status (online, process running) |
 | GET | `/api/monitoring/ram` | RAM usage per node |
 | GET | `/api/monitoring/info/:name` | Node detail |
-| POST | `/api/monitoring/start` | Start EXO on nodes |
-| POST | `/api/monitoring/stop` | Stop EXO on nodes |
-| POST | `/api/monitoring/purge` | Purge all EXO instances |
 | GET | `/api/monitoring/exo-node-metrics` | GPU%, temp, watts per node |
 | GET | `/api/monitoring/exo-models` | Models on ALL EXO nodes |
 | POST | `/api/monitoring/load` | Load model (place_instance) |
 | DELETE | `/api/monitoring/instance/:id` | Unload instance |
 
+### Models & Sync
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/models` | Models per node (matrix view data) |
+| POST | `/api/models/sync` | Start rsync distribution between nodes |
+| GET | `/api/models/sync/progress` | Sync progress (Socket.IO events) |
+| POST | `/api/models/delete` | Delete model from nodes |
+
 ### Downloads
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/download` | Start download (or queue) |
+| POST | `/api/download` | Start HF download (or queue) |
 | GET | `/api/downloads` | All downloads (active + history) |
 | POST | `/api/download/cancel/:id` | Stop / cancel |
 | DELETE | `/api/download/:id` | Remove from list |
 | POST | `/api/download/restart/:id` | Restart stopped download |
+| GET | `/api/hub/search` | Search HuggingFace Hub |
 
 ### Chat
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/chat/engines` | Available chat endpoints |
-| GET | `/api/chat/models` | Models on disk for engine |
+| GET | `/api/chat/models` | Models on disk |
 | GET | `/api/chat/active-model` | Currently loaded model |
-| POST | `/api/chat/completions` | Streaming chat proxy |
+| POST | `/api/chat/completions` | Streaming chat proxy (SSE) |
 
 ### Conversations
 | Method | Path | Description |
@@ -544,16 +469,6 @@ Monitoring → Space View → see GPU%/temp/watts per node → glow = active
 | PUT | `/api/conversations/:id` | Update (rename, pin) |
 | DELETE | `/api/conversations/:id` | Delete |
 | GET | `/api/conversations/:id/inference` | Inference status |
-| POST | `/api/conversations/:id/inference/clear` | Clear inference |
-
-### Hub & Catalogue
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/hub/search` | Search HuggingFace Hub |
-| GET | `/api/catalog` | Curated catalogue |
-| PUT | `/api/catalog` | Replace catalogue |
-| POST | `/api/catalog` | Add model |
-| DELETE | `/api/catalog/:id` | Remove model |
 
 ---
 
@@ -561,80 +476,95 @@ Monitoring → Space View → see GPU%/temp/watts per node → glow = active
 
 | Event | Direction | Payload | Description |
 |-------|-----------|---------|-------------|
-| `download:progress` | Server → Client | `{ id, modelId, progress, status, speed }` | Download progress update |
+| `download:progress` | Server → Client | `{ id, modelId, progress, status, speed }` | Download progress |
 | `download:complete` | Server → Client | `{ id, modelId, status }` | Download finished |
-| `download:queued` | Server → Client | `{ id, modelId, position }` | Download added to queue |
+| `download:queued` | Server → Client | `{ id, modelId, position }` | Added to queue |
+| `sync:progress` | Server → Client | `{ modelId, node, progress, speed }` | Rsync distribution progress |
+| `sync:complete` | Server → Client | `{ modelId, node, status }` | Rsync to node finished |
 
 ---
 
-## 10. Design Guidelines (for Stitch)
+## 10. Design Guidelines
+
+### Look & Feel
+**Inspired by Inferencer Pro** — clean, readable, professional.
+Light theme with white/light gray backgrounds, clear typography, good contrast.
 
 ### Color Palette
 
 | Element | Color | Usage |
 |---------|-------|-------|
-| Background | `#030712` (`gray-950`) | App background |
-| Surface | `#111827` (`gray-900`) | Modal, cards |
-| Border | `#374151` (`gray-700`) | Card borders |
-| Text primary | `#f9fafb` (`gray-50`) | Headings, labels |
-| Text muted | `#6b7280` (`gray-500`) | Secondary text, IP, metadata |
-| EXO / primary | `#6366f1` (`indigo-500`) | RDMA active, EXO brand accent |
-| Active / online | `#10b981` (`emerald-500`) | Running nodes, glow |
+| Background | `#ffffff` / `#f9fafb` | Page background |
+| Surface | `#ffffff` | Cards, panels |
+| Border | `#e5e7eb` (`gray-200`) | Card borders, dividers |
+| Text primary | `#111827` (`gray-900`) | Headings, labels |
+| Text secondary | `#6b7280` (`gray-500`) | Metadata, IPs, timestamps |
+| EXO / primary | `#6366f1` (`indigo-500`) | Primary accent, RDMA active |
+| Active / online | `#10b981` (`emerald-500`) | Running nodes, glow, success |
 | Warning | `#eab308` (`yellow-500`) | Partial states |
 | Error / offline | `#ef4444` (`red-500`) | Offline, error |
-| Download | `#6366f1` (`indigo-400`) | Download panel accent |
-| Chat | `#06b6d4` (`cyan-400`) | Chat button |
-| Benchmark | `#a855f7` (`purple-400`) | Benchmark accent |
-| Catalogue | `#14b8a6` (`teal-400`) | Catalogue accent |
+| Download | `#3b82f6` (`blue-500`) | Download progress |
 
 ### Typography
 - **UI text**: system sans-serif (`ui-sans-serif, -apple-system, sans-serif`)
 - **Monospace** (IPs, model IDs, metrics): `ui-monospace, 'SF Mono', monospace`
-- **Sizes**: 11–14px for dense UI elements, 16–18px for headers
+- **Sizes**: 12–14px for dense UI elements, 18–24px for page headers
 
 ### Component Patterns
-- **Status pills**: small, rounded-full, 2px border, semi-transparent fill
-- **Action buttons**: small (py-1 px-3), border + hover border glow
+- **Status pills**: small, rounded-full, subtle background color
+- **Action buttons**: clean, minimal borders, colored on hover
 - **Progress bars**: thin (3–4px height), rounded, colored by threshold
-- **Modal structure**: max-w-5xl, rounded-xl, border gray-700, shadow-2xl, overflow-y-auto
-- **Icon buttons** (header): square, border, icon only, colored hover state
+- **Cards**: white background, subtle border, slight shadow on hover
+- **Tables**: clean rows with hover highlight, no heavy borders
+- **Nav**: horizontal top bar, clean active state indicator
 
 ### Space View Node Design
-- Circle R=34px, fill `#111827`, colored stroke (2.5px)
+- Circle R=34px, white fill, colored stroke (2.5px)
 - **Glow**: filled circle same color, opacity 0.45, `feGaussianBlur stdDeviation=9`
-- Node name: 14px bold white
-- RAM %: 13px, color-coded (emerald/yellow/red)
+- Node name: 14px bold
+- RAM %: 13px, color-coded
 - IP: 11px muted monospace
-- Metrics (GPU/temp/watts): 11px `#9ca3af` monospace, `GPU X% · XX° · XXXW`
+- Metrics: 11px monospace
 
 ### Interaction States
-- Hover: border opacity increase + slight background lightening
-- Active/loading: opacity 0.5 + cursor-not-allowed on disabled buttons
-- Loading states: "..." text replacement, no spinners (keeps it dense)
+- Hover: subtle background change, border emphasis
+- Active: clear highlight, not just opacity change
+- Loading: subtle pulse or skeleton, no heavy spinners
+- Disabled: muted, cursor-not-allowed
 
 ---
 
-## 11. Not in v1 (Future)
+## 11. v1.1 (Post-Launch)
 
-- **Inferencer support** — Sophie's custom inference stack (separate project)
-- **MLX Convert** — model quantization workflow
-- **Model distribution** (rsync) — push models from source to nodes
-- **Space View for arbitrary topologies** — currently hardcoded for 4-node diamond
+- **Benchmark panel** — measure TTFT + tokens/sec on the cluster
+- **Dark mode** toggle (light default, dark optional)
+- **Keyboard shortcuts** (Cmd+Enter send, Cmd+K new chat)
+- **Search across conversations**
+- **Node reboot from UI**
+- **HuggingFace model library** — browse installed models with disk usage details
+
+---
+
+## 12. Future (v1.2+)
+
+- **Space View for arbitrary topologies** — dynamic layout for 2–8+ nodes
 - **Multi-cluster** — multiple exo clusters from one dashboard
 - **Alerting** — webhook/notification when node goes offline
-- **Mobile** — currently desktop-only (dense information density)
-- **SwiftUI native app** — macOS native wrapper (future roadmap)
-- **Metrics history** — time-series graphs (GPU%, RAM over time)
+- **Mobile responsive** — CSS-only adaptation for tablet/phone
+- **PWA support** — Add to Home Screen, service worker
+- **Metrics history** — time-series graphs (GPU%, RAM, tok/s over time)
+- **SwiftUI companion app** — native macOS/iOS (v2 roadmap)
 
 ---
 
-## 12. Technical Constraints
+## 13. Technical Constraints
 
 - **Backend**: Node.js 20 + Express + Socket.IO
-- **Frontend**: Vanilla HTML/JS with React 18 (Babel CDN transform, no build step)
+- **Frontend**: React 18 (Babel CDN transform, no build step) — single `index.html`
 - **CSS**: Tailwind CDN
 - **Deployment**: Docker (`node:20-alpine`), port 3456
-- **SSH**: All node operations via SSH exec (same key as host mount)
+- **SSH**: All node operations via SSH (key mounted in Docker)
 - **EXO API**: OpenAI-compatible + exo extensions at `http://<node>:52415`
 - **No database**: JSON files in Docker volume (`data/`)
 - **No authentication**: LAN-only, no auth in v1
+- **marked.js**: local copy in `public/`, not CDN
