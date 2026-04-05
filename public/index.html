@@ -297,12 +297,20 @@
             });
           }
         }
-        // Calculate final stats
+        // Calculate final stats and attach to message
         const totalTime = (Date.now() - streamStartTime) / 1000;
         const ttft = firstTokenTime ? (firstTokenTime - streamStartTime) / 1000 : null;
         const genTime = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : totalTime;
         const speed = genTime > 0 && chunkCount > 0 ? (chunkCount / genTime) : 0;
-        setLastStats({ ttft, speed, tokens: chunkCount, totalTime, chunks: chunkCount });
+        const stats = { ttft, speed, tokens: chunkCount, totalTime };
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, stats };
+          }
+          return updated;
+        });
         setStreaming(false);
         abortRef.current = null;
         // Refresh conversation list
@@ -498,12 +506,12 @@
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
                         </div>
-                        {!streaming && msg.content && i === messages.length - 1 && lastStats && (
+                        {msg.stats && (
                           <div className="flex items-center gap-4 mono text-[11px]">
-                            {lastStats.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{lastStats.ttft.toFixed(1)}s</span></span>}
-                            {lastStats.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{lastStats.speed.toFixed(1)} tk/s</span></span>}
-                            {lastStats.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{lastStats.tokens}</span></span>}
-                            {lastStats.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{lastStats.totalTime.toFixed(1)}s</span></span>}
+                            {msg.stats.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{msg.stats.ttft.toFixed(1)}s</span></span>}
+                            {msg.stats.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{msg.stats.speed.toFixed(1)} tk/s</span></span>}
+                            {msg.stats.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{msg.stats.tokens}</span></span>}
+                            {msg.stats.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{msg.stats.totalTime.toFixed(1)}s</span></span>}
                           </div>
                         )}
                       </div>
