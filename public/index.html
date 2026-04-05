@@ -5,61 +5,1232 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ExoScopy</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            exo: '#ffde00',
+            'exo-dark': '#d4a800',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="marked.min.js"></script>
   <style>
-    body { background: #030712; color: #f9fafb; font-family: ui-sans-serif, -apple-system, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111827; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    body { background: #f9fafb; color: #111827; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f3f4f6; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .mono { font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; }
+    .code-block { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+    .code-block code { font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; }
+    .md-body h1 { font-size: 1.25rem; font-weight: 700; margin: 0.75rem 0 0.25rem; }
+    .md-body h2 { font-size: 1.1rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
+    .md-body h3 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
+    .md-body p { margin: 0.25rem 0; line-height: 1.6; }
+    .md-body ul, .md-body ol { margin: 0.25rem 0 0.25rem 1.25rem; }
+    .md-body li { margin: 0.125rem 0; }
+    .md-body pre { margin: 0.5rem 0; }
+    .md-body code:not(pre code) { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+    .md-body a { color: #6366f1; text-decoration: underline; }
+    .md-body blockquote { border-left: 3px solid #e5e7eb; padding-left: 12px; color: #6b7280; margin: 0.5rem 0; }
+    .md-body table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; }
+    .md-body th, .md-body td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; font-size: 0.85em; }
+    .md-body th { background: #f9fafb; font-weight: 600; }
+    .think-block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 8px 0; }
+    .think-block summary { cursor: pointer; color: #9ca3af; font-style: italic; font-size: 0.85em; }
+    .think-block .think-content { color: #6b7280; font-style: italic; font-size: 0.9em; margin-top: 8px; }
   </style>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
     const socket = io();
 
-    // ─── Placeholder UI — full UI coming from Stitch ──────────
-    function App() {
-      const [version, setVersion] = useState('');
-      const [settings, setSettings] = useState(null);
+    // ═══════════════════════════════════════════════════════════════════
+    // UTILITIES
+    // ═══════════════════════════════════════════════════════════════════
 
-      useEffect(() => {
-        fetch('/api/settings').then(r => r.json()).then(d => {
-          setVersion(d.version || '');
-          setSettings(d);
-        }).catch(() => {});
-      }, []);
+    function renderMarkdown(text) {
+      if (!text) return '';
+      let html = text.replace(/\\n/g, '\n');
+      // Handle think blocks
+      html = html.replace(/<think>([\s\S]*?)<\/think>/g, (_, content) => {
+        return `<details class="think-block"><summary>Thinking... (click to expand)</summary><div class="think-content">${marked.parse(content)}</div></details>`;
+      });
+      return marked.parse(html);
+    }
+
+    function timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const diff = Date.now() - new Date(dateStr).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'now';
+      if (mins < 60) return `${mins}m`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}h`;
+      const days = Math.floor(hours / 24);
+      if (days < 7) return `${days}d`;
+      return new Date(dateStr).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    }
+
+    function formatGB(sizeKb) {
+      if (!sizeKb) return '—';
+      return `${(sizeKb / 1048576).toFixed(0)} GB`;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // NAV BAR
+    // ═══════════════════════════════════════════════════════════════════
+
+    function NavBar({ page, setPage, version, clusterStatus }) {
+      const pages = ['Chat', 'Dashboard', 'Models', 'Downloads', 'Settings'];
+      const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
+      const totalCount = clusterStatus?.nodes?.length || 0;
 
       return (
-        <div className="h-screen flex flex-col items-center justify-center gap-6">
-          <div className="text-center">
-            <h1 className="text-4xl font-bold text-white tracking-tight">ExoScopy</h1>
-            <p className="text-gray-500 mt-2 text-sm">See your cluster. Run your models.</p>
-            {version && <p className="text-gray-700 text-xs mt-1">v{version}</p>}
+        <div className="flex items-center justify-between px-6 h-[52px] bg-white border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-[17px] font-bold text-gray-900 tracking-tight">ExoScopy</span>
+            {version && <span className="text-[11px] text-gray-400 font-medium">v{version}</span>}
           </div>
-
-          {settings && !settings.setupComplete && (
-            <div className="bg-gray-900 border border-indigo-500/30 rounded-xl px-8 py-6 text-center max-w-sm">
-              <div className="text-indigo-400 font-medium mb-2">Setup required</div>
-              <p className="text-gray-400 text-sm mb-4">No EXO nodes configured yet. Run node discovery to get started.</p>
-              <button
-                onClick={() => fetch('/api/discover').then(r => r.json()).then(d => console.log('Discovered:', d))}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-              >
-                Discover nodes
+          <div className="flex items-center gap-1">
+            {pages.map(p => (
+              <button key={p} onClick={() => setPage(p)}
+                className={`px-3.5 py-1.5 text-[13px] rounded-md transition-colors ${
+                  page === p ? 'font-semibold text-indigo-500 bg-indigo-50' : 'font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}>
+                {p}
               </button>
-            </div>
-          )}
-
-          <p className="text-gray-700 text-xs">UI in progress — backend ready</p>
+            ))}
+          </div>
+          <div className="flex items-center gap-4">
+            {totalCount > 0 && (
+              <div className="flex items-center gap-1.5">
+                <div className={`w-[7px] h-[7px] rounded-full ${onlineCount === totalCount ? 'bg-emerald-500' : onlineCount > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                <span className="text-xs text-gray-500 font-medium">{onlineCount}/{totalCount} online</span>
+              </div>
+            )}
+            <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+              <span className="text-[11px]">↗</span>
+              <span className="text-xs text-gray-500">exo Dashboard</span>
+            </a>
+          </div>
         </div>
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    // ═══════════════════════════════════════════════════════════════════
+    // CHAT PAGE
+    // ═══════════════════════════════════════════════════════════════════
+
+    function ChatPage({ clusterStatus }) {
+      const [conversations, setConversations] = useState([]);
+      const [activeConvId, setActiveConvId] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState('');
+      const [streaming, setStreaming] = useState(false);
+      const [activeModel, setActiveModel] = useState(null);
+      const [models, setModels] = useState([]);
+      const [selectedModel, setSelectedModel] = useState('');
+      const [preset, setPreset] = useState('normal');
+      const [showSettings, setShowSettings] = useState(false);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [params, setParams] = useState({ temperature: 0.7, maxTokens: 32768, thinking: false, reasoningEffort: 'medium', topP: null, topK: null, minP: null, repPenalty: null, seed: null });
+      const [systemPrompt, setSystemPrompt] = useState('');
+      const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
+      const [savedPrompts, setSavedPrompts] = useState([]);
+      const [selectedPromptIdx, setSelectedPromptIdx] = useState(-1);
+      const messagesEndRef = useRef(null);
+      const inputRef = useRef(null);
+      const abortRef = useRef(null);
+
+      const PRESETS = {
+        creative: { temperature: 1.2, topP: 0.95, topK: null, minP: null, maxTokens: 32768, thinking: false },
+        normal: { temperature: 0.7, topP: null, topK: null, minP: null, maxTokens: 32768, thinking: false },
+        code: { temperature: 0.2, topP: 0.9, topK: 50, minP: 0.05, maxTokens: 65536, thinking: false },
+      };
+
+      // Load conversations + models + active model
+      useEffect(() => {
+        fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
+        fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
+        fetch('/api/chat/active-model?engine=exo1').then(r => r.json()).then(d => {
+          if (d.activeModel) { setActiveModel(d.activeModel); setSelectedModel(d.activeModel); }
+        }).catch(() => {});
+      }, []);
+
+      // Load conversation messages when active changes
+      useEffect(() => {
+        if (!activeConvId) { setMessages([]); return; }
+        fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d => {
+          setMessages(d.messages || []);
+        }).catch(() => {});
+      }, [activeConvId]);
+
+      // Auto-scroll
+      useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+      // Apply preset
+      function applyPreset(name) {
+        setPreset(name);
+        const p = PRESETS[name];
+        setParams(prev => ({ ...prev, temperature: p.temperature, topP: p.topP, topK: p.topK, minP: p.minP, maxTokens: p.maxTokens, thinking: p.thinking }));
+      }
+
+      // Create new conversation
+      async function newConversation() {
+        const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: 'exo1', model: selectedModel }) }).then(r => r.json());
+        setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
+        setActiveConvId(conv.id);
+        setMessages([]);
+      }
+
+      // Delete conversation
+      async function deleteConversation(id) {
+        await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+        setConversations(prev => prev.filter(c => c.id !== id));
+        if (activeConvId === id) { setActiveConvId(null); setMessages([]); }
+      }
+
+      // Send message
+      async function handleSend() {
+        if ((!input.trim()) || streaming) return;
+        const userMsg = input.trim();
+        setInput('');
+
+        let convId = activeConvId;
+        if (!convId) {
+          const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: 'exo1', model: selectedModel }) }).then(r => r.json());
+          convId = conv.id;
+          setActiveConvId(convId);
+          setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
+        }
+
+        const userMessage = { role: 'user', content: userMsg, timestamp: new Date().toISOString() };
+        setMessages(prev => [...prev, userMessage]);
+
+        const allMessages = [...messages, userMessage];
+        const apiMessages = [];
+        if (systemPromptEnabled && systemPrompt) {
+          apiMessages.push({ role: 'system', content: systemPrompt });
+        }
+        apiMessages.push(...allMessages.map(m => ({ role: m.role, content: m.content })));
+
+        setStreaming(true);
+        const assistantMsg = { role: 'assistant', content: '', timestamp: new Date().toISOString() };
+        setMessages(prev => [...prev, assistantMsg]);
+
+        try {
+          const body = {
+            engine: 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
+            conversationId: convId,
+            temperature: params.temperature, max_tokens: params.maxTokens,
+          };
+          if (params.thinking) { body.thinking = true; body.enable_thinking = true; }
+          else { body.enable_thinking = false; }
+          if (params.thinking && params.reasoningEffort) body.reasoning_effort = params.reasoningEffort;
+          if (params.topP != null) body.top_p = params.topP;
+          if (params.topK != null) body.top_k = params.topK;
+          if (params.minP != null) body.min_p = params.minP;
+          if (params.repPenalty != null) { body.repetition_penalty = params.repPenalty; body.repetition_context_size = 256; }
+          if (params.seed != null) body.seed = params.seed;
+
+          const controller = new AbortController();
+          abortRef.current = controller;
+          const res = await fetch('/api/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body), signal: controller.signal,
+          });
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let accumulated = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            for (const line of chunk.split('\n')) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  accumulated += delta;
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: accumulated };
+                    return updated;
+                  });
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {
+          if (e.name !== 'AbortError') {
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...updated[updated.length - 1], content: `Error: ${e.message}` };
+              return updated;
+            });
+          }
+        }
+        setStreaming(false);
+        abortRef.current = null;
+        // Refresh conversation list
+        fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
+      }
+
+      function stopStreaming() {
+        if (abortRef.current) abortRef.current.abort();
+        setStreaming(false);
+      }
+
+      const filteredConvs = conversations.filter(c => !searchQuery || c.title?.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      return (
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar */}
+          <div className="w-[240px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+            <div className="p-4 pb-3 flex flex-col gap-2.5">
+              <div className="flex items-center gap-2 px-2.5 py-[7px] bg-gray-100 rounded-lg">
+                <span className="text-[13px] text-gray-400">🔍</span>
+                <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                  className="bg-transparent text-[13px] text-gray-900 outline-none flex-1 placeholder-gray-400" />
+              </div>
+              <button onClick={newConversation} className="flex items-center justify-center gap-1.5 py-2 bg-exo rounded-lg text-[13px] font-semibold text-gray-900 hover:brightness-95 transition">
+                + New chat
+              </button>
+            </div>
+            <div className="flex-1 flex flex-col px-2 gap-0.5 overflow-y-auto">
+              {filteredConvs.map(c => (
+                <button key={c.id} onClick={() => setActiveConvId(c.id)}
+                  className={`text-left px-3 py-2.5 rounded-lg flex flex-col gap-1 group transition-colors ${
+                    activeConvId === c.id ? 'bg-gray-100 border-l-[3px] border-exo' : 'hover:bg-gray-50'
+                  }`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-[13px] truncate max-w-[150px] ${activeConvId === c.id ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
+                      {c.pinned && <span className="text-[10px] text-gray-400 mr-1">📌</span>}
+                      {c.title || 'New conversation'}
+                    </span>
+                    <span className="text-[11px] text-gray-400">{timeAgo(c.updatedAt)}</span>
+                  </div>
+                  {c.lastMessage && <span className="text-[12px] text-gray-400 truncate">{c.lastMessage}</span>}
+                  <button onClick={e => { e.stopPropagation(); deleteConversation(c.id); }}
+                    className="hidden group-hover:block text-[10px] text-red-400 hover:text-red-600">Delete</button>
+                </button>
+              ))}
+              {filteredConvs.length === 0 && (
+                <div className="text-center py-8 text-gray-400 text-sm">No conversations yet</div>
+              )}
+            </div>
+          </div>
+
+          {/* Chat area */}
+          <div className="flex-1 flex flex-col bg-[#f9fafb]">
+            {/* Chat header */}
+            <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}
+                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none">
+                  {models.map(m => (
+                    <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
+                  ))}
+                  {models.length === 0 && <option value="">No models available</option>}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+                  {['creative', 'normal', 'code'].map(p => (
+                    <button key={p} onClick={() => applyPreset(p)}
+                      className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                        preset === p ? 'bg-exo text-gray-900 font-semibold' : 'text-gray-500 hover:bg-gray-50'
+                      }`}>{p === 'creative' ? 'Creative' : p === 'normal' ? 'Normal' : 'Code'}</button>
+                  ))}
+                </div>
+                <button onClick={() => setShowSettings(!showSettings)}
+                  className={`px-2.5 py-1 border rounded-lg text-xs font-medium transition-colors ${showSettings ? 'border-exo bg-exo/10 text-gray-900' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  ⚙ Inference Settings
+                </button>
+              </div>
+            </div>
+
+            {/* Inference Settings Panel */}
+            {showSettings && (
+              <div className="bg-white border-b border-gray-200 px-6 py-5">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-[15px] font-bold text-gray-900">Inference Settings</span>
+                  <button onClick={() => setShowSettings(false)} className="text-gray-400 text-lg hover:text-gray-600">×</button>
+                </div>
+                <div className="flex gap-6 mb-4">
+                  {/* Col 1: Generation */}
+                  <div className="flex-1 flex flex-col gap-3.5">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Generation</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between"><span className="text-xs text-gray-700 font-medium">Temperature</span><span className="mono text-xs text-gray-900 font-medium">{params.temperature.toFixed(2)}</span></div>
+                      <input type="range" min="0" max="2" step="0.05" value={params.temperature} onChange={e => setParams(p => ({ ...p, temperature: parseFloat(e.target.value) }))} className="w-full h-1.5 bg-gray-100 rounded appearance-none accent-[#ffde00]" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-gray-700 font-medium">Max tokens</span>
+                      <input type="number" value={params.maxTokens} onChange={e => setParams(p => ({ ...p, maxTokens: parseInt(e.target.value) || 32768 }))} className="mono text-xs px-2.5 py-1.5 border border-gray-200 rounded-md bg-white" />
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-gray-700 font-medium">Thinking</span>
+                      <button onClick={() => setParams(p => ({ ...p, thinking: !p.thinking }))} className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${params.thinking ? 'bg-exo justify-end' : 'bg-gray-200'}`}>
+                        <div className="w-4 h-4 bg-white rounded-full shadow-sm" />
+                      </button>
+                    </div>
+                    {params.thinking && (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs text-gray-700 font-medium">Reasoning effort</span>
+                        <select value={params.reasoningEffort} onChange={e => setParams(p => ({ ...p, reasoningEffort: e.target.value }))} className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-md bg-white">
+                          {['none','minimal','low','medium','high','xhigh'].map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <div className="w-px bg-gray-100" />
+                  {/* Col 2: Sampling */}
+                  <div className="flex-1 flex flex-col gap-3.5">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Sampling</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between"><span className="text-xs text-gray-700 font-medium">Top P</span><span className="mono text-xs text-gray-400">{params.topP ?? '—'}</span></div>
+                      <input type="range" min="0" max="1" step="0.05" value={params.topP ?? 0} onChange={e => setParams(p => ({ ...p, topP: parseFloat(e.target.value) || null }))} className="w-full h-1.5 bg-gray-100 rounded appearance-none accent-[#ffde00]" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-gray-700 font-medium">Top K</span>
+                      <input type="number" value={params.topK ?? ''} onChange={e => setParams(p => ({ ...p, topK: parseInt(e.target.value) || null }))} placeholder="—" className="mono text-xs px-2.5 py-1.5 border border-gray-200 rounded-md bg-white placeholder-gray-400" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between"><span className="text-xs text-gray-700 font-medium">Min P</span><span className="mono text-xs text-gray-400">{params.minP ?? '—'}</span></div>
+                      <input type="range" min="0" max="0.5" step="0.01" value={params.minP ?? 0} onChange={e => setParams(p => ({ ...p, minP: parseFloat(e.target.value) || null }))} className="w-full h-1.5 bg-gray-100 rounded appearance-none accent-[#ffde00]" />
+                    </div>
+                  </div>
+                  <div className="w-px bg-gray-100" />
+                  {/* Col 3: Penalties & Seed */}
+                  <div className="flex-1 flex flex-col gap-3.5">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Penalties & Seed</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between"><span className="text-xs text-gray-700 font-medium">Rep. penalty</span><span className="mono text-xs text-gray-400">{params.repPenalty ?? '—'}</span></div>
+                      <input type="range" min="1" max="2" step="0.05" value={params.repPenalty ?? 1} onChange={e => setParams(p => ({ ...p, repPenalty: parseFloat(e.target.value) > 1 ? parseFloat(e.target.value) : null }))} className="w-full h-1.5 bg-gray-100 rounded appearance-none accent-[#ffde00]" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-gray-700 font-medium">Seed</span>
+                      <input type="number" value={params.seed ?? ''} onChange={e => setParams(p => ({ ...p, seed: parseInt(e.target.value) || null }))} placeholder="—" className="mono text-xs px-2.5 py-1.5 border border-gray-200 rounded-md bg-white placeholder-gray-400" />
+                    </div>
+                  </div>
+                </div>
+                {/* System prompt */}
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">System Prompt</span>
+                    <button onClick={() => setSystemPromptEnabled(!systemPromptEnabled)} className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${systemPromptEnabled ? 'bg-exo justify-end' : 'bg-gray-200'}`}>
+                      <div className="w-4 h-4 bg-white rounded-full shadow-sm" />
+                    </button>
+                  </div>
+                  <div className="flex gap-2 items-start">
+                    <select value={selectedPromptIdx} onChange={e => {
+                      const idx = parseInt(e.target.value);
+                      setSelectedPromptIdx(idx);
+                      if (idx >= 0 && savedPrompts[idx]) setSystemPrompt(savedPrompts[idx].content);
+                    }} className="text-xs px-2.5 py-2 border border-gray-200 rounded-lg bg-white flex-shrink-0">
+                      <option value={-1}>Custom</option>
+                      {savedPrompts.map((p, i) => <option key={i} value={i}>{p.name}</option>)}
+                    </select>
+                    <textarea value={systemPrompt} onChange={e => { setSystemPrompt(e.target.value); setSelectedPromptIdx(-1); }}
+                      placeholder="You are a helpful assistant..."
+                      className="flex-1 text-xs px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 resize-none h-[120px] overflow-y-auto" />
+                    <button onClick={() => {
+                      if (!systemPrompt.trim()) return;
+                      const name = prompt('Prompt name:');
+                      if (name) setSavedPrompts(prev => [...prev, { name, content: systemPrompt }]);
+                    }} className="px-3 py-2 bg-exo rounded-lg text-xs font-semibold text-gray-900 flex-shrink-0 hover:brightness-95">Save</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="max-w-[720px] mx-auto flex flex-col gap-5 py-6 px-4">
+                {messages.length === 0 && !activeConvId && (
+                  <div className="flex flex-col items-center justify-center py-20 gap-4">
+                    <h2 className="text-2xl font-bold text-gray-900">ExoScopy</h2>
+                    <p className="text-gray-400 text-sm">Select a model to get started.</p>
+                  </div>
+                )}
+                {messages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'user' ? (
+                      <div className="max-w-[520px] px-4 py-3 bg-gray-100 rounded-2xl rounded-br-sm">
+                        <p className="text-sm text-gray-900 whitespace-pre-wrap">{msg.content}</p>
+                      </div>
+                    ) : (
+                      <div className="max-w-[600px] flex flex-col gap-2">
+                        <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
+                          <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                        </div>
+                        {!streaming && msg.content && i === messages.length - 1 && (
+                          <span className="mono text-[11px] text-gray-400">Response complete</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {streaming && (
+                  <div className="flex justify-start">
+                    <div className="px-3 py-2 text-gray-400 text-sm animate-pulse">●●●</div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            {/* Input bar */}
+            <div className="px-6 py-4 bg-white border-t border-gray-200 flex-shrink-0">
+              <div className="max-w-[720px] mx-auto flex items-end gap-2.5 px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus-within:border-exo transition-colors">
+                <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                  placeholder="Type your message..." rows={1}
+                  className="flex-1 text-sm text-gray-900 outline-none resize-none max-h-[150px] placeholder-gray-400" />
+                {streaming ? (
+                  <button onClick={stopStreaming} className="px-4 py-1.5 bg-red-500 text-white text-[13px] font-semibold rounded-lg hover:bg-red-600 transition-colors">Stop</button>
+                ) : (
+                  <button onClick={handleSend} disabled={!input.trim()} className="px-4 py-1.5 bg-exo text-gray-900 text-[13px] font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40 disabled:cursor-not-allowed">Send</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DASHBOARD PAGE
+    // ═══════════════════════════════════════════════════════════════════
+
+    function DashboardPage({ clusterStatus }) {
+      const [downloads, setDownloads] = useState([]);
+      const [nodeMetrics, setNodeMetrics] = useState([]);
+      const [ramData, setRamData] = useState([]);
+
+      useEffect(() => {
+        fetch('/api/downloads').then(r => r.json()).then(setDownloads).catch(() => {});
+        fetch('/api/monitoring/exo-node-metrics').then(r => r.json()).then(d => setNodeMetrics(d.nodes || [])).catch(() => {});
+        fetch('/api/monitoring/ram').then(r => r.json()).then(setRamData).catch(() => {});
+        const interval = setInterval(() => {
+          fetch('/api/downloads').then(r => r.json()).then(setDownloads).catch(() => {});
+          fetch('/api/monitoring/exo-node-metrics').then(r => r.json()).then(d => setNodeMetrics(d.nodes || [])).catch(() => {});
+          fetch('/api/monitoring/ram').then(r => r.json()).then(setRamData).catch(() => {});
+        }, 10000);
+        return () => clearInterval(interval);
+      }, []);
+
+      // Listen to Socket.IO events
+      useEffect(() => {
+        const onProgress = () => fetch('/api/downloads').then(r => r.json()).then(setDownloads).catch(() => {});
+        socket.on('download:progress', onProgress);
+        socket.on('download:complete', onProgress);
+        return () => { socket.off('download:progress', onProgress); socket.off('download:complete', onProgress); };
+      }, []);
+
+      const activeDownloads = downloads.filter(d => d.status === 'downloading');
+      const queued = downloads.filter(d => d.status === 'queued');
+      const history = downloads.filter(d => ['done', 'stopped', 'error'].includes(d.status));
+      const nodes = clusterStatus?.nodes || [];
+      const instances = clusterStatus?.instances || [];
+      const activeModelName = instances[0]?.model || null;
+
+      function parseProgress(prog) {
+        if (!prog) return { gb: 0, total: 0, pct: 0, speed: 0 };
+        const parts = prog.split(':');
+        const gb = parseFloat(parts[0]) || 0;
+        const total = parseFloat(parts[1]) || 0;
+        const speed = parseFloat(parts[3]) || 0;
+        const pct = total > 0 ? Math.round(gb / total * 100) : 0;
+        return { gb, total, pct, speed };
+      }
+
+      return (
+        <div className="flex-1 flex flex-col overflow-y-auto">
+          {/* Page header with active model */}
+          <div className="flex justify-between items-center px-10 pt-5 pb-4">
+            <span className="text-[22px] font-bold text-gray-900">Dashboard</span>
+            {activeModelName && (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                <span className="text-[11px]">⚡</span>
+                <span className="mono text-xs font-semibold text-amber-800">{activeModelName}</span>
+                <span className="text-[11px] text-amber-700">· {instances[0]?.shardCount || '?'} nodes</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 flex gap-6 px-10 pb-6">
+            {/* Left: Activity */}
+            <div className="flex-1 flex flex-col gap-4">
+              {/* Downloading */}
+              {activeDownloads.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Downloading</span>
+                  {activeDownloads.map(dl => {
+                    const p = parseProgress(dl.progress);
+                    return (
+                      <div key={dl.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2">
+                        <div className="flex justify-between items-center">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[13px] font-semibold text-gray-900">{dl.modelId}</span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="mono text-[11px] text-gray-500">{p.gb} / {p.total} GB</span>
+                            <span className="mono text-[11px] font-semibold text-gray-900">{p.pct}%</span>
+                            <span className="mono text-[11px] text-emerald-500">{p.speed} MB/s</span>
+                            <button onClick={() => fetch(`/api/download/cancel/${dl.id}`, { method: 'POST' })}
+                              className="px-2.5 py-0.5 border border-red-200 rounded text-[11px] text-red-600 hover:bg-red-50">Stop</button>
+                          </div>
+                        </div>
+                        <div className="h-[5px] bg-gray-100 rounded-full">
+                          <div className="h-full bg-exo rounded-full transition-all" style={{ width: `${p.pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Queued */}
+              {queued.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Queued</span>
+                  {queued.map((dl, i) => (
+                    <div key={dl.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex justify-between items-center">
+                      <div className="flex items-center gap-2.5">
+                        <span className="mono text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">#{i + 1}</span>
+                        <span className="text-xs font-medium text-gray-900">{dl.modelId}</span>
+                      </div>
+                      <button onClick={() => fetch(`/api/download/cancel/${dl.id}`, { method: 'POST' })}
+                        className="text-[11px] text-red-600 hover:underline">Cancel</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* History */}
+              {history.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">History</span>
+                  {history.slice(0, 10).map(dl => (
+                    <div key={dl.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex justify-between items-center">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`text-sm ${dl.status === 'done' ? 'text-emerald-500' : dl.status === 'stopped' ? 'text-yellow-500' : 'text-red-500'}`}>
+                          {dl.status === 'done' ? '✓' : dl.status === 'stopped' ? '⚠' : '✕'}
+                        </span>
+                        <span className="text-xs text-gray-700">{dl.modelId}</span>
+                        <span className="mono text-[10px] text-gray-400">{dl.status}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {(dl.status === 'stopped' || dl.status === 'error') && (
+                          <button onClick={() => fetch(`/api/download/restart/${dl.id}`, { method: 'POST' })}
+                            className="text-[11px] text-indigo-500 hover:underline">Restart</button>
+                        )}
+                        <button onClick={() => fetch(`/api/download/${dl.id}`, { method: 'DELETE' })}
+                          className="text-[11px] text-gray-400 hover:text-gray-600">🗑</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {activeDownloads.length === 0 && queued.length === 0 && history.length === 0 && (
+                <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">No activity</div>
+              )}
+            </div>
+
+            {/* Right: Cluster Nodes */}
+            <div className="w-[320px] flex flex-col gap-2 flex-shrink-0">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Cluster Nodes</span>
+              {nodes.map(node => {
+                const metrics = nodeMetrics.find(m => m.name === node.name);
+                const ram = ramData.find(r => r.name === node.name);
+                return (
+                  <div key={node.name} className={`bg-white border rounded-xl p-3.5 flex flex-col gap-2 ${node.online ? 'border-gray-200' : 'border-red-200 opacity-60'}`}>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`w-[7px] h-[7px] rounded-full ${node.online ? (node.processRunning ? 'bg-emerald-500' : 'bg-yellow-500') : 'bg-red-500'}`} />
+                        <span className="text-[13px] font-semibold text-gray-900">{node.name}</span>
+                      </div>
+                      <span className="mono text-[10px] text-gray-400">{node.ip}</span>
+                    </div>
+                    {node.online ? (
+                      <>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex justify-between">
+                            <span className="text-[11px] text-gray-500">RAM</span>
+                            <span className="mono text-[11px] text-gray-500">{ram ? `${ram.used} / ${ram.total} GB (${ram.percent}%)` : '—'}</span>
+                          </div>
+                          <div className="h-[3px] bg-gray-100 rounded-full">
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${ram?.percent || 0}%`, minWidth: '4px' }} />
+                          </div>
+                        </div>
+                        <div className="flex gap-4">
+                          <span className="mono text-[10px] text-gray-400">GPU {metrics?.gpuPct ?? '—'}%</span>
+                          <span className="mono text-[10px] text-gray-400">{metrics?.tempC ?? '—'}°C</span>
+                          <span className="mono text-[10px] text-gray-400">{metrics?.watts ?? '—'}W</span>
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-red-500">Offline</span>
+                    )}
+                  </div>
+                );
+              })}
+              {nodes.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">No nodes configured</div>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // MODELS PAGE
+    // ═══════════════════════════════════════════════════════════════════
+
+    function ModelsPage({ clusterStatus }) {
+      const [nodeModels, setNodeModels] = useState({});
+      const [activeModel, setActiveModel] = useState(null);
+      const [loadModel, setLoadModel] = useState('');
+      const [sharding, setSharding] = useState('Pipeline');
+      const [loadStatus, setLoadStatus] = useState(null);
+
+      useEffect(() => {
+        // Scan models on each node
+        fetch('/api/monitoring/exo-models').then(r => r.json()).then(d => {
+          // This gives intersection; we need per-node data
+        }).catch(() => {});
+        fetch('/api/chat/active-model?engine=exo1').then(r => r.json()).then(d => {
+          if (d.activeModel) setActiveModel(d.activeModel);
+        }).catch(() => {});
+        fetch('/api/monitoring/status').then(r => r.json()).then(d => {
+          if (d.instances?.[0]?.model) {
+            setActiveModel(d.instances[0].model);
+            setLoadModel(d.instances[0].model);
+            setLoadStatus({ status: 'running', model: d.instances[0].model, nodes: d.instances[0]?.shardCount || 0 });
+          }
+        }).catch(() => {});
+      }, []);
+
+      const nodes = clusterStatus?.nodes || [];
+
+      async function handleLoad() {
+        if (!loadModel) return;
+        setLoadStatus({ status: 'loading', model: loadModel });
+        try {
+          const res = await fetch('/api/monitoring/load', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelId: loadModel, sharding, minNodes: nodes.filter(n => n.online).length || 1 }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setLoadStatus({ status: 'running', model: loadModel });
+            setActiveModel(loadModel);
+          } else {
+            setLoadStatus({ status: 'failed', model: loadModel, error: data.error });
+          }
+        } catch (e) {
+          setLoadStatus({ status: 'failed', model: loadModel, error: e.message });
+        }
+      }
+
+      async function handleUnload() {
+        try {
+          await fetch('/api/monitoring/purge', { method: 'POST' });
+          setLoadStatus(null);
+          setActiveModel(null);
+        } catch (e) {}
+      }
+
+      return (
+        <div className="flex-1 flex flex-col overflow-y-auto">
+          <div className="flex justify-between items-center px-10 pt-5 pb-4">
+            <div className="flex items-baseline gap-3">
+              <span className="text-[22px] font-bold text-gray-900">Models</span>
+              <span className="text-[13px] text-gray-400">{nodes.length} nodes</span>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => {/* TODO: HF search modal */}}
+                className="px-4 py-2 bg-exo rounded-lg text-[13px] font-semibold text-gray-900 hover:brightness-95">+ Download</button>
+              <button className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50">+ Add custom model</button>
+            </div>
+          </div>
+
+          {/* Models will show as a simple list for now — full matrix requires per-node scan */}
+          <div className="px-10 pb-4 text-xs text-gray-400">
+            Model matrix view requires SSH scan of each node. Configure nodes in Settings first.
+          </div>
+
+          {/* Load Model section */}
+          <div className="px-10 pb-6">
+            <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
+              <div className="flex justify-between items-center">
+                <span className="text-lg font-bold text-gray-900">Load Model</span>
+                <span className="text-xs text-gray-400">v1: single instance</span>
+              </div>
+              <div className="flex gap-4 items-end">
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <span className="text-xs text-gray-500 font-medium">Model</span>
+                  <input type="text" value={loadModel} onChange={e => setLoadModel(e.target.value)}
+                    placeholder="mlx-community/ModelName"
+                    className="mono text-xs px-3 py-2.5 border border-gray-200 rounded-lg bg-white" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-gray-500 font-medium">Sharding</span>
+                  <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+                    <button onClick={() => setSharding('Pipeline')} className={`px-4 py-2 text-[13px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
+                    <button onClick={() => setSharding('Tensor')} className={`px-4 py-2 text-[13px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Status + Load button */}
+              {loadStatus ? (
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-lg ${
+                  loadStatus.status === 'running' ? 'bg-emerald-50 border border-emerald-200' :
+                  loadStatus.status === 'loading' ? 'bg-amber-50 border border-amber-200' :
+                  'bg-red-50 border border-red-200'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    loadStatus.status === 'running' ? 'bg-emerald-500' :
+                    loadStatus.status === 'loading' ? 'bg-amber-500 animate-pulse' : 'bg-red-500'
+                  }`} />
+                  <span className={`text-[13px] font-semibold ${
+                    loadStatus.status === 'running' ? 'text-emerald-600' :
+                    loadStatus.status === 'loading' ? 'text-amber-600' : 'text-red-600'
+                  }`}>{loadStatus.status === 'running' ? 'Running' : loadStatus.status === 'loading' ? 'Loading...' : 'Failed'}</span>
+                  <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
+                  {loadStatus.error && <span className="text-xs text-red-500">{loadStatus.error}</span>}
+                  <div className="flex-1" />
+                  {loadStatus.status === 'running' && (
+                    <button onClick={handleUnload} className="px-3 py-1 border border-red-200 rounded text-xs text-red-600 hover:bg-red-50">Unload</button>
+                  )}
+                  <button onClick={handleLoad} className="px-4 py-1.5 bg-exo rounded-md text-[13px] font-semibold text-gray-900 hover:brightness-95">Load Model</button>
+                </div>
+              ) : (
+                <div className="flex justify-end">
+                  <button onClick={handleLoad} className="px-5 py-2.5 bg-exo rounded-lg text-sm font-semibold text-gray-900 hover:brightness-95">Load Model</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DOWNLOADS PAGE (HuggingFace Search)
+    // ═══════════════════════════════════════════════════════════════════
+
+    function DownloadsPage() {
+      const [query, setQuery] = useState('');
+      const [results, setResults] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [format, setFormat] = useState('mlx');
+      const [sort, setSort] = useState('downloads');
+      const [directId, setDirectId] = useState('');
+
+      async function search() {
+        if (!query.trim()) return;
+        setLoading(true);
+        try {
+          const params = new URLSearchParams({ q: query, format, sort, limit: '30' });
+          const res = await fetch(`/api/hub/search?${params}`);
+          const data = await res.json();
+          setResults(data);
+        } catch (e) {
+          console.error('HF search error:', e);
+        }
+        setLoading(false);
+      }
+
+      async function downloadModel(modelId) {
+        try {
+          await fetch('/api/download', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelId }),
+          });
+        } catch (e) {}
+      }
+
+      async function downloadDirect() {
+        if (!directId.includes('/')) return;
+        await downloadModel(directId);
+        setDirectId('');
+      }
+
+      return (
+        <div className="flex-1 flex flex-col overflow-y-auto">
+          <div className="flex justify-between items-center px-10 pt-5 pb-0">
+            <div className="flex items-baseline gap-3">
+              <span className="text-[22px] font-bold text-gray-900">Downloads</span>
+              <span className="text-[13px] text-gray-400">Search and download models</span>
+            </div>
+            <a href="https://huggingface.co" target="_blank" rel="noopener" className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50">
+              <span className="text-[11px]">↗</span>
+              <span className="text-xs text-gray-500">huggingface.co</span>
+            </a>
+          </div>
+
+          {/* Search + Direct */}
+          <div className="px-10 py-4 flex gap-3">
+            <div className="flex-1 flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl">
+              <span className="text-gray-400">🔍</span>
+              <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && search()}
+                placeholder="Search HuggingFace..." className="flex-1 text-sm text-gray-900 outline-none placeholder-gray-400" />
+              <button onClick={search} className="px-3 py-1 bg-exo rounded-md text-xs font-semibold text-gray-900 hover:brightness-95">Search</button>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl w-[360px]">
+              <span className="text-xs text-gray-400">Direct:</span>
+              <input type="text" value={directId} onChange={e => setDirectId(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && downloadDirect()}
+                placeholder="author/model-name" className="flex-1 mono text-xs text-gray-900 outline-none placeholder-gray-400" />
+              <button onClick={downloadDirect} disabled={!directId.includes('/')}
+                className="px-2.5 py-1 bg-exo rounded text-xs font-semibold text-gray-900 hover:brightness-95 disabled:opacity-40">↓</button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="px-10 pb-4 flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Format</span>
+              {['mlx', 'all'].map(f => (
+                <button key={f} onClick={() => setFormat(f)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium ${format === f ? 'bg-exo font-semibold text-gray-900' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  {f === 'mlx' ? 'MLX' : 'All'}
+                </button>
+              ))}
+            </div>
+            <div className="w-px h-6 bg-gray-200" />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sort</span>
+              <select value={sort} onChange={e => setSort(e.target.value)} className="text-[11px] px-2 py-1 border border-gray-200 rounded-md bg-white">
+                <option value="downloads">Popularity</option>
+                <option value="lastModified">Date</option>
+                <option value="likes">Likes</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Results */}
+          <div className="px-10 pb-4">
+            {loading && <div className="text-center py-8 text-gray-400 text-sm">Searching...</div>}
+            {!loading && results.length > 0 && (
+              <div className="text-xs text-gray-400 mb-2">{results.length} results</div>
+            )}
+          </div>
+          <div className="flex-1 px-10 pb-6 flex flex-col gap-2 overflow-y-auto">
+            {results.map(m => (
+              <div key={m.id} className="bg-white border border-gray-200 rounded-xl px-5 py-3.5 flex items-center gap-4">
+                <div className="flex-1 flex flex-col gap-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-900">{m.modelName || m.id}</span>
+                    {m.format && <span className="mono text-[10px] font-semibold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">{m.format.toUpperCase()}</span>}
+                    {m.quantBits && <span className="mono text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{m.quantBits}-bit</span>}
+                    {m.precision && <span className="mono text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{m.precision}</span>}
+                    {m.namedParams && <span className="mono text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{m.namedParams}B</span>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="mono text-[11px] text-gray-400">{m.author}</span>
+                    {m.estimatedSizeGB && <span className="mono text-[11px] text-gray-500">~{m.estimatedSizeGB} GB</span>}
+                    <span className="text-[11px] text-gray-400">↓ {m.downloads >= 1000 ? `${(m.downloads/1000).toFixed(1)}K` : m.downloads}</span>
+                  </div>
+                </div>
+                <button onClick={() => downloadModel(m.id)}
+                  className="px-3.5 py-1.5 bg-exo rounded-md text-xs font-semibold text-gray-900 hover:brightness-95 flex-shrink-0">
+                  Download
+                </button>
+              </div>
+            ))}
+            {!loading && results.length === 0 && query && (
+              <div className="text-center py-8 text-gray-400 text-sm">No results. Try a different search.</div>
+            )}
+            {!query && results.length === 0 && (
+              <div className="text-center py-12 text-gray-400 text-sm">Search HuggingFace to find models for your cluster.</div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SETTINGS PAGE
+    // ═══════════════════════════════════════════════════════════════════
+
+    function SettingsPage({ settings, refreshSettings }) {
+      const [nodes, setNodes] = useState(settings?.nodes || []);
+      const [exoIp, setExoIp] = useState(settings?.chat?.exo1?.ip || '');
+      const [exoPort, setExoPort] = useState(settings?.chat?.exo1?.port || 52415);
+      const [sshUser, setSshUser] = useState(settings?.sshUser || 'admin');
+      const [newNodeName, setNewNodeName] = useState('');
+      const [newNodeIp, setNewNodeIp] = useState('');
+      const [newNodeRam, setNewNodeRam] = useState('');
+      const [discovering, setDiscovering] = useState(false);
+      const [discovered, setDiscovered] = useState([]);
+      const [testResult, setTestResult] = useState(null);
+
+      useEffect(() => {
+        if (settings) {
+          setNodes(settings.nodes || []);
+          setExoIp(settings.chat?.exo1?.ip || '');
+          setExoPort(settings.chat?.exo1?.port || 52415);
+          setSshUser(settings.sshUser || 'admin');
+        }
+      }, [settings]);
+
+      async function save() {
+        const updated = {
+          ...settings,
+          nodes,
+          chat: { exo1: { name: 'EXO', ip: exoIp, port: exoPort } },
+          sshUser,
+          setupComplete: nodes.length > 0,
+        };
+        await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
+        refreshSettings();
+      }
+
+      async function discover() {
+        setDiscovering(true);
+        try {
+          const res = await fetch('/api/discover');
+          const data = await res.json();
+          setDiscovered(data);
+        } catch (e) {}
+        setDiscovering(false);
+      }
+
+      function addNode() {
+        if (!newNodeName || !newNodeIp) return;
+        setNodes(prev => [...prev, { name: newNodeName, ip: newNodeIp, ram: newNodeRam || '—', paths: { exo: '~/.exo/models' } }]);
+        if (!exoIp) setExoIp(newNodeIp);
+        setNewNodeName(''); setNewNodeIp(''); setNewNodeRam('');
+      }
+
+      function addDiscoveredNode(ip) {
+        const name = `node-${ip.split('.').pop()}`;
+        setNodes(prev => [...prev, { name, ip, ram: '—', paths: { exo: '~/.exo/models' } }]);
+        if (!exoIp) setExoIp(ip);
+      }
+
+      function removeNode(i) {
+        setNodes(prev => prev.filter((_, idx) => idx !== i));
+      }
+
+      async function testEndpoint() {
+        try {
+          const controller = new AbortController();
+          setTimeout(() => controller.abort(), 3000);
+          const res = await fetch(`http://${exoIp}:${exoPort}/v1/models`, { signal: controller.signal });
+          setTestResult(res.ok ? 'connected' : 'failed');
+        } catch (e) {
+          setTestResult('failed');
+        }
+        setTimeout(() => setTestResult(null), 5000);
+      }
+
+      return (
+        <div className="flex-1 flex gap-8 px-10 py-5 overflow-y-auto">
+          <div className="flex-1 flex flex-col gap-7">
+            <span className="text-[22px] font-bold text-gray-900">Settings</span>
+
+            {/* EXO Nodes */}
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-semibold text-gray-900">EXO Nodes</span>
+                <div className="flex gap-2">
+                  <button onClick={discover} disabled={discovering}
+                    className="px-3 py-1.5 border border-gray-200 rounded-md text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                    {discovering ? 'Scanning...' : '🔍 Re-discover'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Discovered nodes */}
+              {discovered.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-indigo-600 uppercase">Discovered on LAN</span>
+                  {discovered.map(d => (
+                    <div key={d.ip} className="flex items-center justify-between">
+                      <span className="mono text-xs text-gray-700">{d.ip}:{d.port} — {d.modelCount} models</span>
+                      {!nodes.find(n => n.ip === d.ip) ? (
+                        <button onClick={() => addDiscoveredNode(d.ip)} className="text-[11px] text-indigo-600 hover:underline">+ Add</button>
+                      ) : (
+                        <span className="text-[11px] text-gray-400">Already added</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Nodes table */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="flex px-4 py-2 bg-gray-50 border-b border-gray-200">
+                  <div className="flex-[2] text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Name</div>
+                  <div className="flex-[2] text-[11px] font-semibold text-gray-400 uppercase tracking-wider">IP Address</div>
+                  <div className="flex-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">RAM</div>
+                  <div className="w-[60px]" />
+                </div>
+                {nodes.map((node, i) => (
+                  <div key={i} className="flex px-4 py-2.5 border-b border-gray-100 items-center">
+                    <div className="flex-[2] text-[13px] font-medium text-gray-900">{node.name}</div>
+                    <div className="flex-[2] mono text-xs text-gray-500">{node.ip}</div>
+                    <div className="flex-1 text-xs text-gray-500">{node.ram}</div>
+                    <div className="w-[60px] text-right">
+                      <button onClick={() => removeNode(i)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                    </div>
+                  </div>
+                ))}
+                {/* Add row */}
+                <div className="flex px-4 py-2 items-center gap-2 bg-gray-50">
+                  <input type="text" value={newNodeName} onChange={e => setNewNodeName(e.target.value)} placeholder="Name" className="flex-[2] text-xs px-2 py-1.5 border border-gray-200 rounded bg-white" />
+                  <input type="text" value={newNodeIp} onChange={e => setNewNodeIp(e.target.value)} placeholder="IP Address" className="flex-[2] mono text-xs px-2 py-1.5 border border-gray-200 rounded bg-white" />
+                  <input type="text" value={newNodeRam} onChange={e => setNewNodeRam(e.target.value)} placeholder="RAM" className="flex-1 text-xs px-2 py-1.5 border border-gray-200 rounded bg-white" />
+                  <button onClick={addNode} className="px-3 py-1.5 bg-exo rounded text-xs font-semibold text-gray-900 hover:brightness-95">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            {/* EXO Endpoint */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-sm font-semibold text-gray-900">EXO Endpoint</span>
+              <div className="flex gap-3 items-center">
+                <input type="text" value={exoIp} onChange={e => setExoIp(e.target.value)} placeholder="192.168.86.29"
+                  className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[200px]" />
+                <span className="text-gray-400">:</span>
+                <input type="number" value={exoPort} onChange={e => setExoPort(parseInt(e.target.value) || 52415)}
+                  className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[80px]" />
+                <button onClick={testEndpoint} className="px-3.5 py-2 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-50">Test</button>
+                {testResult && (
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full ${testResult === 'connected' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={`text-xs ${testResult === 'connected' ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {testResult === 'connected' ? 'Connected' : 'Failed'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SSH */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-sm font-semibold text-gray-900">SSH</span>
+              <div className="flex gap-4">
+                <div className="flex flex-col gap-1 flex-1">
+                  <span className="text-xs text-gray-500">User</span>
+                  <input type="text" value={sshUser} onChange={e => setSshUser(e.target.value)}
+                    className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white" />
+                </div>
+                <div className="flex flex-col gap-1 flex-[2]">
+                  <span className="text-xs text-gray-500">Key path</span>
+                  <input type="text" value={settings?.sshOpts?.match(/-i\s+(\S+)/)?.[1] || '/root/.ssh/id_ed25519'} readOnly
+                    className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500" />
+                </div>
+              </div>
+            </div>
+
+            {/* Save */}
+            <button onClick={save} className="self-start px-6 py-2.5 bg-exo rounded-lg text-sm font-semibold text-gray-900 hover:brightness-95">
+              Save Settings
+            </button>
+          </div>
+
+          {/* About card */}
+          <div className="w-[260px] flex-shrink-0">
+            <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3.5">
+              <span className="text-sm font-semibold text-gray-900">About</span>
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Version</span><span className="mono text-xs text-gray-900">{settings?.version || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-xs text-gray-500">Nodes</span><span className="text-xs text-gray-900">{nodes.length} configured</span></div>
+              </div>
+              <div className="h-px bg-gray-100" />
+              <div className="flex flex-col gap-2">
+                <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-xs text-indigo-500 hover:underline">↗ ExoScopy on GitHub</a>
+                <a href="https://github.com/exo-explore/exo" target="_blank" className="text-xs text-indigo-500 hover:underline">↗ exo on GitHub</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // APP — Router
+    // ═══════════════════════════════════════════════════════════════════
+
+    function App() {
+      const [page, setPage] = useState('Chat');
+      const [settings, setSettings] = useState(null);
+      const [clusterStatus, setClusterStatus] = useState(null);
+
+      function refreshSettings() {
+        fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => {});
+      }
+
+      useEffect(() => {
+        refreshSettings();
+        // Fetch cluster status
+        const fetchStatus = () => {
+          fetch('/api/monitoring/status').then(r => r.json()).then(setClusterStatus).catch(() => {});
+        };
+        fetchStatus();
+        const interval = setInterval(fetchStatus, 15000);
+        return () => clearInterval(interval);
+      }, []);
+
+      return (
+        <div className="h-screen flex flex-col">
+          <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus} />
+          {page === 'Chat' && <ChatPage clusterStatus={clusterStatus} />}
+          {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
+          {page === 'Models' && <ModelsPage clusterStatus={clusterStatus} />}
+          {page === 'Downloads' && <DownloadsPage />}
+          {page === 'Settings' && <SettingsPage settings={settings} refreshSettings={refreshSettings} />}
+        </div>
+      );
+    }
+
+    // ─── Error Boundary ───────────────────────────────────────────
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { error: null }; }
+      static getDerivedStateFromError(error) { return { error }; }
+      render() {
+        if (this.state.error) {
+          return (
+            <div className="h-screen flex items-center justify-center bg-gray-50">
+              <div className="text-center max-w-md">
+                <h1 className="text-xl font-bold text-red-600 mb-2">Something went wrong</h1>
+                <p className="text-sm text-gray-500 mb-4">{this.state.error.message}</p>
+                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-exo rounded-lg text-sm font-semibold">Reload</button>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <ErrorBoundary><App /></ErrorBoundary>
+    );
   </script>
 </body>
 </html>

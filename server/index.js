@@ -32,7 +32,7 @@ const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const PORT = 3456;
@@ -52,28 +52,18 @@ app.put('/api/settings', (req, res) => {
     const current = getSettings();
     const update  = req.body;
 
-    // Validate nodes array (1-5 elements, each needs name + ip + paths.exo)
+    // Validate nodes array (0-10 elements, each needs name + ip)
     if (update.nodes) {
-      if (!Array.isArray(update.nodes) || update.nodes.length < 1 || update.nodes.length > 5) {
-        return res.status(400).json({ error: 'nodes must be an array of 1-5 elements' });
+      if (!Array.isArray(update.nodes) || update.nodes.length > 10) {
+        return res.status(400).json({ error: 'nodes must be an array of 0-10 elements' });
       }
       for (const n of update.nodes) {
         if (!n.name || !n.ip) {
           return res.status(400).json({ error: 'Each node needs name and ip' });
         }
-        if (!n.paths || !n.paths.exo) {
-          return res.status(400).json({ error: 'Each node needs paths.exo' });
-        }
-      }
-    }
-
-    // Validate source
-    if (update.source) {
-      if (!update.source.name || !update.source.ip) {
-        return res.status(400).json({ error: 'source needs name and ip' });
-      }
-      if (!update.source.paths || !update.source.paths.exo) {
-        return res.status(400).json({ error: 'source needs paths.exo' });
+        // Ensure paths.exo has a default
+        if (!n.paths) n.paths = { exo: '~/.exo/models' };
+        if (!n.paths.exo) n.paths.exo = '~/.exo/models';
       }
     }
 

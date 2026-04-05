@@ -13,14 +13,18 @@ const DEFAULTS = {
   // EXO API port (standard exo default)
   exoPort: 52415,
 
-  // Chat endpoints — one per EXO cluster/endpoint
+  // Chat endpoint — single EXO engine
   chat: {
     exo1: { name: 'EXO', ip: '', port: 52415 },
   },
 
-  // SSH access to nodes (for download, metrics)
+  // SSH access to nodes (for download, metrics, sync)
   sshUser: 'admin',
   sshOpts: '-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i /root/.ssh/id_ed25519',
+
+  // System prompt
+  systemPrompt: '',
+  systemPromptEnabled: false,
 
   // First-run setup
   setupComplete: false,
