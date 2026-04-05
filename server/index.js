@@ -1012,7 +1012,9 @@ app.post('/api/chat/completions', async (req, res) => {
   if (isStreaming)           body.stream_options      = { include_usage: true };
   if (temperature != null)   body.temperature         = temperature;
   if (max_tokens  != null)   body.max_tokens          = max_tokens;
-  if (thinking)              body.enable_thinking     = true;
+  // CRITICAL: always send enable_thinking explicitly.
+  // Qwen3.5 activates thinking by default if not sent → TTFT 30-50s instead of 1-2s
+  body.enable_thinking = thinking === true;
   if (top_p       != null)   body.top_p               = top_p;
   if (top_k       != null)   body.top_k               = top_k;
   if (min_p       != null)   body.min_p               = min_p;
