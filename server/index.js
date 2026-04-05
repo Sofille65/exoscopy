@@ -430,24 +430,22 @@ app.get('/api/monitoring/exo-node-metrics', async (req, res) => {
   }
 });
 
-// GET /api/monitoring/exo-models — models present on ALL EXO nodes (intersection)
+// GET /api/monitoring/exo-models — models available via exo API (HTTP, no SSH scan)
 app.get('/api/monitoring/exo-models', async (req, res) => {
-  const settings     = getSettings();
-  const exoNodeNames = settings.exoNodes || settings.nodes.map(n => n.name);
+  const settings = getSettings();
+  const exoPort  = settings.exoPort || 52415;
+  const firstNode = settings.nodes[0];
+  if (!firstNode) return res.json({ models: [] });
 
   try {
-    const nodeScans = await scanAllNodes('exo');
-    const exoScans  = nodeScans.filter(
-      n => exoNodeNames.includes(n.node) && (n.models || []).length > 0
-    );
-    if (exoScans.length === 0) return res.json({ models: [] });
-
-    // Intersection: models on every scanned node
-    const sets   = exoScans.map(n => new Set((n.models || []).map(m => m.name)));
-    const common = [...sets[0]].filter(m => sets.every(s => s.has(m)));
-    const models = common.map(m => m.replace('--', '/')).sort();
-
-    res.json({ models, nodeCount: exoScans.length });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/v1/models`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ models: [] });
+    const data = await r.json();
+    const models = (data.data || []).map(m => m.id).sort();
+    res.json({ models, nodeCount: settings.nodes.length });
   } catch (e) {
     res.status(500).json({ error: e.message, models: [] });
   }
@@ -955,20 +953,21 @@ app.get('/api/chat/active-model', async (req, res) => {
   }
 });
 
-// GET /api/chat/models?engine=exo1|exo2 — models on disk (from ultra-512 scan)
+// GET /api/chat/models?engine=exo1 — models available via exo /v1/models (HTTP, no SSH)
 app.get('/api/chat/models', async (req, res) => {
   const engine = req.query.engine || 'exo1';
   const base   = getChatEndpoint(engine);
   if (!base) return res.status(400).json({ error: `Unknown engine: ${engine}` });
 
   try {
-    const nodes    = await scanAllNodes('exo');
-    const ultra512 = nodes.find(n => n.node === 'ultra-512') || nodes[0];
-    const diskModels = (ultra512?.models || []).map(m => {
-      const id = m.name.replace('--', '/');
-      return { id, name: id };
-    }).sort((a, b) => a.id.localeCompare(b.id));
-    res.json({ engine, models: diskModels });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(`${base}/v1/models`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
+    const data = await r.json();
+    const models = (data.data || []).map(m => ({ id: m.id, name: m.id })).sort((a, b) => a.id.localeCompare(b.id));
+    res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
   }
