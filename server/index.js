@@ -158,44 +158,42 @@ function getDashboardURL() {
 // MONITORING API
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GET /api/monitoring/status — process status + active EXO instances
+// GET /api/monitoring/status — node reachability + active EXO instances
+// Uses HTTP probes to exo API (no SSH required)
 app.get('/api/monitoring/status', async (req, res) => {
   const nodes = getExoNodes();
+  const exoPort = getSettings().exoPort || 52415;
 
-  // Check process and SSD/symlink state on each node in parallel
+  // Check each node by probing its exo API via HTTP
   const nodeStatuses = await Promise.all(nodes.map(async (node) => {
-    const procCheck = await sshExec(node.ip,
-      'pgrep -f EXO > /dev/null 2>&1 && echo RUNNING || echo STOPPED', 5000);
-    const processRunning = procCheck.ok && procCheck.stdout === 'RUNNING';
-
-    const ssdCheck = await sshExec(node.ip,
-      'test -d /Volumes/models/exo && echo OK || echo MISSING', 5000);
-    const ssdOk = ssdCheck.ok && ssdCheck.stdout === 'OK';
-
-    const linkCheck = await sshExec(node.ip,
-      'test -L ~/.exo/models && echo OK || echo MISSING', 5000);
-    const symlinkOk = linkCheck.ok && linkCheck.stdout === 'OK';
-
-    return {
-      name:          node.name,
-      ip:            node.ip,
-      ram:           node.ram,
-      online:        procCheck.ok,    // SSH reachable
-      processRunning,
-      exoRunning:    processRunning,  // alias for clarity
-      ssdOk,
-      symlinkOk,
-    };
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      const r = await fetch(`http://${node.ip}:${exoPort}/v1/models`, { signal: controller.signal });
+      clearTimeout(timer);
+      return {
+        name: node.name, ip: node.ip, ram: node.ram,
+        online: true, processRunning: r.ok, exoRunning: r.ok,
+      };
+    } catch (e) {
+      return {
+        name: node.name, ip: node.ip, ram: node.ram,
+        online: false, processRunning: false, exoRunning: false,
+      };
+    }
   }));
 
-  // Query EXO /state for loaded instances
+  // Query EXO /state for loaded instances (direct HTTP, not SSH)
   let instances = [];
   try {
     const firstOnline = nodeStatuses.find(n => n.online);
     if (firstOnline) {
-      const r = await sshExec(firstOnline.ip, 'curl -s http://localhost:52415/state 2>/dev/null', 10000);
-      if (r.ok && r.stdout) {
-        const state = JSON.parse(r.stdout);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const r = await fetch(`http://${firstOnline.ip}:${exoPort}/state`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (r.ok) {
+        const state = await r.json();
         const insts = state.instances || {};
         instances = Object.entries(insts).map(([id, info]) => {
           let model      = 'unknown';
@@ -221,7 +219,6 @@ app.get('/api/monitoring/status', async (req, res) => {
                  || info.model_id  || info.model  || 'unknown';
           }
 
-          // Last-resort: scan raw JSON for known model id patterns
           if (model === 'unknown') {
             const flat  = JSON.stringify(info);
             const match = flat.match(/mlx-community\/[^"]+|"modelId"\s*:\s*"([^"]+)"/);
@@ -345,45 +342,52 @@ app.post('/api/monitoring/purge', async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.json({ purged: 0, error: 'No EXO nodes configured' });
+  const exoPort = getSettings().exoPort || 52415;
 
-  const stateR = await sshExec(firstNode.ip, 'curl -s http://localhost:52415/state 2>/dev/null', 5000);
-  if (!stateR.ok || !stateR.stdout) {
-    return res.json({ purged: 0, error: 'Cluster unreachable' });
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const stateR = await fetch(`http://${firstNode.ip}:${exoPort}/state`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!stateR.ok) return res.json({ purged: 0, error: 'Cluster unreachable' });
+
+    const stateResult = await stateR.json();
+    if (!stateResult.instances) return res.json({ purged: 0, error: 'No instances found' });
+
+    const instanceIds = Object.keys(stateResult.instances);
+    const results = [];
+
+    for (const iid of instanceIds) {
+      try {
+        const r = await fetch(`http://${firstNode.ip}:${exoPort}/instance/${iid}`, { method: 'DELETE' });
+        results.push({ id: iid, ok: r.ok });
+      } catch (e) {
+        results.push({ id: iid, ok: false });
+      }
+    }
+
+    res.json({ purged: results.filter(r => r.ok).length, total: instanceIds.length, results });
+  } catch (e) {
+    res.json({ purged: 0, error: e.message });
   }
-
-  let stateResult;
-  try { stateResult = JSON.parse(stateR.stdout); } catch (e) {
-    return res.json({ purged: 0, error: 'Invalid state response' });
-  }
-
-  if (!stateResult.instances) {
-    return res.json({ purged: 0, error: 'No instances found' });
-  }
-
-  const instanceIds = Object.keys(stateResult.instances);
-  const results     = [];
-
-  for (const iid of instanceIds) {
-    const r = await sshExec(firstNode.ip,
-      `curl -s -X DELETE http://localhost:52415/instance/${iid} 2>/dev/null`, 5000);
-    results.push({ id: iid, ok: r.ok });
-  }
-
-  res.json({ purged: results.filter(r => r.ok).length, total: instanceIds.length, results });
 });
 
 // GET /api/monitoring/exo-node-metrics — GPU%, temp, watts per node from EXO /state
 app.get('/api/monitoring/exo-node-metrics', async (req, res) => {
   const settings     = getSettings();
+  const exoPort      = settings.exoPort || 52415;
   const exoNodeNames = settings.exoNodes || settings.nodes.map(n => n.name);
   const firstNode    = settings.nodes.find(n => exoNodeNames.includes(n.name));
   if (!firstNode) return res.json({ nodes: [] });
 
   try {
-    const r = await sshExec(firstNode.ip, 'curl -s http://localhost:52415/state 2>/dev/null', 8000);
-    if (!r.ok || !r.stdout) return res.json({ nodes: [] });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/state`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ nodes: [] });
 
-    const state = JSON.parse(r.stdout);
+    const state = await r.json();
     const { nodeSystem, nodeMemory, nodeNetwork } = state;
     if (!nodeSystem || !nodeNetwork) return res.json({ nodes: [] });
 
@@ -455,28 +459,21 @@ app.post('/api/monitoring/load', async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.status(400).json({ error: 'No EXO nodes configured' });
+  const exoPort = getSettings().exoPort || 52415;
 
   const { modelId, sharding = 'Tensor', minNodes = 4 } = req.body;
   if (!modelId) return res.status(400).json({ error: 'modelId required' });
-  if (!/^[\w\-./]+$/.test(modelId)) return res.status(400).json({ error: 'Invalid modelId' });
-
-  const body = JSON.stringify({
-    model_id:       modelId,
-    sharding,
-    instance_meta:  'MlxJaccl',
-    min_nodes:      minNodes,
-  });
-
-  const r = await sshExec(
-    firstNode.ip,
-    `curl -s -X POST http://localhost:52415/place_instance -H 'Content-Type: application/json' -d '${body}'`,
-    30000
-  );
 
   try {
-    res.json(JSON.parse(r.stdout));
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/place_instance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id: modelId, sharding, instance_meta: 'MlxJaccl', min_nodes: minNodes }),
+    });
+    const data = await r.json();
+    res.json(data);
   } catch (e) {
-    res.status(500).json({ error: r.stdout || r.error || 'Failed to load model' });
+    res.status(500).json({ error: e.message || 'Failed to load model' });
   }
 });
 
@@ -485,20 +482,15 @@ app.delete('/api/monitoring/instance/:instanceId', async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.status(400).json({ error: 'No EXO nodes configured' });
+  const exoPort = getSettings().exoPort || 52415;
 
   const { instanceId } = req.params;
-  if (!/^[\w\-]+$/.test(instanceId)) return res.status(400).json({ error: 'Invalid instanceId' });
-
-  const r = await sshExec(
-    firstNode.ip,
-    `curl -s -X DELETE http://localhost:52415/instance/${instanceId} 2>/dev/null`,
-    10000
-  );
-
   try {
-    res.json(JSON.parse(r.stdout));
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/instance/${instanceId}`, { method: 'DELETE' });
+    const data = await r.json();
+    res.json(data);
   } catch (e) {
-    res.status(500).json({ error: r.stdout || r.error || 'Failed to delete instance' });
+    res.status(500).json({ error: e.message || 'Failed to delete instance' });
   }
 });
 
@@ -902,12 +894,14 @@ app.post('/api/conversations/:id/inference/clear', (req, res) => {
 // CHAT API
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Return base URL for a chat engine key (from settings.chat). */
+/** Return base URL for a chat engine key (from settings.chat), with fallback to first node. */
 function getChatEndpoint(engine) {
   const settings = getSettings();
   const cfg      = (settings.chat || {})[engine];
-  if (!cfg) return null;
-  return `http://${cfg.ip}:${cfg.port}`;
+  const ip = cfg?.ip || settings.nodes?.[0]?.ip;
+  const port = cfg?.port || settings.exoPort || 52415;
+  if (!ip) return null;
+  return `http://${ip}:${port}`;
 }
 
 // GET /api/chat/engines — list configured EXO chat engines
