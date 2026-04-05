@@ -576,8 +576,16 @@
                       </div>
                     ) : (
                       <div className="max-w-[600px] flex flex-col gap-2">
-                        <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
+                        <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm group/msg relative">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                          {!streaming && msg.content && (
+                            <div className="hidden group-hover/msg:flex absolute top-2 right-2 gap-1">
+                              <button onClick={() => navigator.clipboard.writeText(msg.content)}
+                                className="px-1.5 py-0.5 text-[10px] text-gray-400 bg-white border border-gray-200 rounded hover:bg-gray-50 hover:text-gray-600">Copy MD</button>
+                              <button onClick={() => downloadFile(`response-${i}.md`, msg.content)}
+                                className="px-1.5 py-0.5 text-[10px] text-gray-400 bg-white border border-gray-200 rounded hover:bg-gray-50 hover:text-gray-600">↓ Save</button>
+                            </div>
+                          )}
                         </div>
                         {/* Code block save buttons */}
                         {!streaming && msg.content && (() => {
