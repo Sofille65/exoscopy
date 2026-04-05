@@ -681,7 +681,8 @@
                 <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                   placeholder="Type your message..." rows={1}
-                  className="flex-1 text-sm text-gray-900 outline-none resize-none max-h-[150px] placeholder-gray-400" />
+                  style={{ minHeight: '24px' }}
+                  className="flex-1 text-sm text-gray-900 outline-none resize-none max-h-[150px] placeholder-gray-400 bg-transparent" />
                 {streaming ? (
                   <button onClick={stopStreaming} className="px-4 py-1.5 bg-red-500 text-white text-[13px] font-semibold rounded-lg hover:bg-red-600 transition-colors">Stop</button>
                 ) : (
