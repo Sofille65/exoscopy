@@ -1037,9 +1037,11 @@
 
       async function testEndpoint() {
         try {
-          const controller = new AbortController();
-          setTimeout(() => controller.abort(), 3000);
-          const res = await fetch(`http://${exoIp}:${exoPort}/v1/models`, { signal: controller.signal });
+          // Save current endpoint first so backend uses it
+          const updated = { ...settings, chat: { exo1: { name: 'EXO', ip: exoIp, port: exoPort } }, sshUser };
+          await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
+          // Test via backend proxy (avoids CORS)
+          const res = await fetch('/api/chat/active-model?engine=exo1');
           setTestResult(res.ok ? 'connected' : 'failed');
         } catch (e) {
           setTestResult('failed');
