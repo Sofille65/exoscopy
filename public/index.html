@@ -29,22 +29,27 @@
     ::-webkit-scrollbar-track { background: #f3f4f6; }
     ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
     .mono { font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; }
-    .code-block { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 12px; line-height: 1.6; }
-    .code-block code { font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; }
-    .md-body h1 { font-size: 1.25rem; font-weight: 700; margin: 0.75rem 0 0.25rem; }
-    .md-body h2 { font-size: 1.1rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
-    .md-body h3 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
-    .md-body p { margin: 0.25rem 0; line-height: 1.6; }
-    .md-body ul, .md-body ol { margin: 0.25rem 0 0.25rem 1.25rem; }
-    .md-body li { margin: 0.125rem 0; }
-    .md-body pre { margin: 0.5rem 0; }
-    .md-body code:not(pre code) { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; color: #c7254e; }
+    .md-body p { margin: 0.4em 0; line-height: 1.6; }
+    .md-body p:first-child { margin-top: 0; }
+    .md-body p:last-child { margin-bottom: 0; }
+    .md-body h1, .md-body h2, .md-body h3 { font-weight: 600; margin: 0.8em 0 0.3em; }
+    .md-body h1 { font-size: 1.25em; }
+    .md-body h2 { font-size: 1.1em; }
+    .md-body h3 { font-size: 1em; color: #6366f1; }
+    .md-body ul, .md-body ol { margin: 0.3em 0; padding-left: 1.5em; }
+    .md-body ul { list-style-type: disc; }
+    .md-body ol { list-style-type: decimal; }
+    .md-body li { margin: 0.15em 0; }
+    .md-body code { background: #1e1e2e; color: #a5b4fc; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.88em; font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; }
+    .md-body pre { background: #1e1e2e; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0.8em 1em; margin: 0.5em 0; overflow-x: auto; }
+    .md-body pre code { background: none; padding: 0; color: #e2e8f0; display: block; line-height: 1.6; font-size: 0.85em; }
+    .md-body blockquote { border-left: 3px solid #e5e7eb; padding-left: 0.8em; margin: 0.4em 0; color: #6b7280; }
+    .md-body table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
+    .md-body th, .md-body td { border: 1px solid #e5e7eb; padding: 0.3em 0.6em; font-size: 0.88em; }
+    .md-body th { background: #f9fafb; font-weight: 600; }
     .md-body strong { font-weight: 600; color: #111827; }
     .md-body a { color: #6366f1; text-decoration: underline; }
-    .md-body blockquote { border-left: 3px solid #e5e7eb; padding-left: 12px; color: #6b7280; margin: 0.5rem 0; }
-    .md-body table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; }
-    .md-body th, .md-body td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; font-size: 0.85em; }
-    .md-body th { background: #f9fafb; font-weight: 600; }
+    .md-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 0.8em 0; }
     .think-block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 8px 0; }
     .think-block summary { cursor: pointer; color: #9ca3af; font-style: italic; font-size: 0.85em; }
     .think-block .think-content { color: #6b7280; font-style: italic; font-size: 0.9em; margin-top: 8px; }
@@ -60,23 +65,22 @@
     // UTILITIES
     // ═══════════════════════════════════════════════════════════════════
 
-    // Configure marked renderer for code blocks
-    const renderer = new marked.Renderer();
-    renderer.code = function({ text, lang }) {
-      const langLabel = lang ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:11px;color:#a6adc8;">${lang}</span></div>` : '';
-      return `<pre class="code-block">${langLabel}<code>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`;
-    };
-    marked.setOptions({ renderer, breaks: true });
-
-    function renderMarkdown(text) {
+    // Render markdown — same approach as Model Manager (simple, reliable)
+    const renderMd = (text) => {
       if (!text) return '';
-      let html = text.replace(/\\n/g, '\n');
-      // Handle think blocks
-      html = html.replace(/<think>([\s\S]*?)<\/think>/g, (_, content) => {
-        return `<details class="think-block"><summary>Thinking... (click to expand)</summary><div class="think-content">${marked.parse(content)}</div></details>`;
+      let t = text.replace(/\\n/g, '\n');
+      // Handle think blocks before markdown
+      t = t.replace(/<think>([\s\S]*?)<\/think>/g, (_, content) => {
+        return `<details class="think-block"><summary>Thinking... (click to expand)</summary><div class="think-content">${content}</div></details>`;
       });
-      return marked.parse(html);
-    }
+      try {
+        if (typeof marked !== 'undefined') {
+          const fn = typeof marked.parse === 'function' ? marked.parse : marked;
+          return fn(t, { breaks: true, gfm: true });
+        }
+      } catch (e) {}
+      return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    };
 
     function timeAgo(dateStr) {
       if (!dateStr) return '';
@@ -586,7 +590,7 @@
                     ) : (
                       <div className="max-w-[600px] flex flex-col gap-2">
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm group/msg relative">
-                          <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                          <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMd(msg.content) }} />
                           {!streaming && msg.content && (
                             <div className="flex absolute top-2 right-2 gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                               <button onClick={() => { navigator.clipboard.writeText(msg.content); }}
