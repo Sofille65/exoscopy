@@ -953,7 +953,9 @@ app.get('/api/chat/active-model', async (req, res) => {
   }
 });
 
-// GET /api/chat/models?engine=exo1 — models available via exo /v1/models (HTTP, no SSH)
+// GET /api/chat/models?engine=exo1 — installed models only (from /state DownloadCompleted)
+// exo /v1/models returns the full catalog (100+ including non-downloaded).
+// We parse /state → downloads to find DownloadCompleted entries = actually on disk.
 app.get('/api/chat/models', async (req, res) => {
   const engine = req.query.engine || 'exo1';
   const base   = getChatEndpoint(engine);
@@ -962,11 +964,26 @@ app.get('/api/chat/models', async (req, res) => {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const r = await fetch(`${base}/v1/models`, { signal: controller.signal });
+    const r = await fetch(`${base}/state`, { signal: controller.signal });
     clearTimeout(timer);
     if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
-    const data = await r.json();
-    const models = (data.data || []).map(m => ({ id: m.id, name: m.id })).sort((a, b) => a.id.localeCompare(b.id));
+    const state = await r.json();
+
+    // Extract completed downloads across all nodes
+    const completedModels = new Set();
+    const downloads = state.downloads || {};
+    for (const [peerId, nodeDownloads] of Object.entries(downloads)) {
+      for (const entry of nodeDownloads) {
+        if (entry.DownloadCompleted) {
+          const meta = entry.DownloadCompleted.shardMetadata;
+          const modelId = meta?.PipelineShardMetadata?.modelCard?.modelId
+                       || meta?.TensorShardMetadata?.modelCard?.modelId;
+          if (modelId) completedModels.add(modelId);
+        }
+      }
+    }
+
+    const models = [...completedModels].sort().map(id => ({ id, name: id }));
     res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
