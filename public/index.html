@@ -149,6 +149,7 @@
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
       const [savedPrompts, setSavedPrompts] = useState([]);
       const [selectedPromptIdx, setSelectedPromptIdx] = useState(-1);
+      const [lastStats, setLastStats] = useState(null);
       const messagesEndRef = useRef(null);
       const inputRef = useRef(null);
       const abortRef = useRef(null);
@@ -226,8 +227,13 @@
         apiMessages.push(...allMessages.map(m => ({ role: m.role, content: m.content })));
 
         setStreaming(true);
+        setLastStats(null);
         const assistantMsg = { role: 'assistant', content: '', timestamp: new Date().toISOString() };
         setMessages(prev => [...prev, assistantMsg]);
+        const streamStartTime = Date.now();
+        let firstTokenTime = null;
+        let tokenCount = 0;
+        let chunkCount = 0;
 
         try {
           const body = {
@@ -267,7 +273,12 @@
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices?.[0]?.delta?.content;
                 if (delta) {
+                  if (!firstTokenTime) firstTokenTime = Date.now();
                   accumulated += delta;
+                  tokenCount += delta.length > 0 ? 1 : 0; // approximate: 1 token per SSE delta
+                  chunkCount++;
+                  // Check for usage stats in the chunk
+                  if (parsed.usage?.completion_tokens) tokenCount = parsed.usage.completion_tokens;
                   setMessages(prev => {
                     const updated = [...prev];
                     updated[updated.length - 1] = { ...updated[updated.length - 1], content: accumulated };
@@ -286,6 +297,12 @@
             });
           }
         }
+        // Calculate final stats
+        const totalTime = (Date.now() - streamStartTime) / 1000;
+        const ttft = firstTokenTime ? (firstTokenTime - streamStartTime) / 1000 : null;
+        const genTime = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : totalTime;
+        const speed = genTime > 0 && chunkCount > 0 ? (chunkCount / genTime) : 0;
+        setLastStats({ ttft, speed, tokens: chunkCount, totalTime, chunks: chunkCount });
         setStreaming(false);
         abortRef.current = null;
         // Refresh conversation list
@@ -481,8 +498,13 @@
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
                         </div>
-                        {!streaming && msg.content && i === messages.length - 1 && (
-                          <span className="mono text-[11px] text-gray-400">Response complete</span>
+                        {!streaming && msg.content && i === messages.length - 1 && lastStats && (
+                          <div className="flex items-center gap-4 mono text-[11px]">
+                            {lastStats.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{lastStats.ttft.toFixed(1)}s</span></span>}
+                            {lastStats.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{lastStats.speed.toFixed(1)} tk/s</span></span>}
+                            {lastStats.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{lastStats.tokens}</span></span>}
+                            {lastStats.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{lastStats.totalTime.toFixed(1)}s</span></span>}
+                          </div>
                         )}
                       </div>
                     )}
