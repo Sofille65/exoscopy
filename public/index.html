@@ -149,7 +149,7 @@
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
       const [savedPrompts, setSavedPrompts] = useState([]);
       const [selectedPromptIdx, setSelectedPromptIdx] = useState(-1);
-      const [lastStats, setLastStats] = useState(null);
+      const statsMapRef = useRef({}); // convId-msgIdx → stats
       const messagesEndRef = useRef(null);
       const inputRef = useRef(null);
       const abortRef = useRef(null);
@@ -227,7 +227,6 @@
         apiMessages.push(...allMessages.map(m => ({ role: m.role, content: m.content })));
 
         setStreaming(true);
-        setLastStats(null);
         const assistantMsg = { role: 'assistant', content: '', timestamp: new Date().toISOString() };
         setMessages(prev => [...prev, assistantMsg]);
         const streamStartTime = Date.now();
@@ -297,24 +296,23 @@
             });
           }
         }
-        // Calculate final stats and attach to message
+        // Calculate final stats and store by convId + message index
         const totalTime = (Date.now() - streamStartTime) / 1000;
         const ttft = firstTokenTime ? (firstTokenTime - streamStartTime) / 1000 : null;
         const genTime = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : totalTime;
         const speed = genTime > 0 && chunkCount > 0 ? (chunkCount / genTime) : 0;
         const stats = { ttft, speed, tokens: chunkCount, totalTime };
         setMessages(prev => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last && last.role === 'assistant') {
-            updated[updated.length - 1] = { ...last, stats };
-          }
-          return updated;
+          const msgIdx = prev.length - 1;
+          if (convId) statsMapRef.current[`${convId}-${msgIdx}`] = stats;
+          return prev;
         });
         setStreaming(false);
         abortRef.current = null;
-        // Refresh conversation list
-        fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
+        // Refresh conversation list (but don't reload current messages — keep stats)
+        fetch('/api/conversations').then(r => r.json()).then(list => {
+          setConversations(list);
+        }).catch(() => {});
       }
 
       function stopStreaming() {
@@ -506,14 +504,17 @@
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
                         </div>
-                        {msg.stats && (
-                          <div className="flex items-center gap-4 mono text-[11px]">
-                            {msg.stats.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{msg.stats.ttft.toFixed(1)}s</span></span>}
-                            {msg.stats.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{msg.stats.speed.toFixed(1)} tk/s</span></span>}
-                            {msg.stats.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{msg.stats.tokens}</span></span>}
-                            {msg.stats.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{msg.stats.totalTime.toFixed(1)}s</span></span>}
-                          </div>
-                        )}
+                        {(() => {
+                          const s = activeConvId && statsMapRef.current[`${activeConvId}-${i}`];
+                          return s ? (
+                            <div className="flex items-center gap-4 mono text-[11px]">
+                              {s.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{s.ttft.toFixed(1)}s</span></span>}
+                              {s.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{s.speed.toFixed(1)} tk/s</span></span>}
+                              {s.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{s.tokens}</span></span>}
+                              {s.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{s.totalTime.toFixed(1)}s</span></span>}
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     )}
                   </div>
