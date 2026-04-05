@@ -155,6 +155,22 @@
       }
     }
 
+    // Clipboard copy that works on HTTP (not just HTTPS)
+    function copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        copyToClipboard(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    }
+
     function formatGB(sizeKb) {
       if (!sizeKb) return '—';
       return `${(sizeKb / 1048576).toFixed(0)} GB`;
@@ -593,7 +609,7 @@
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMd(msg.content) }} />
                           {!streaming && msg.content && (
                             <div className="flex absolute top-2 right-2 gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                              <button onClick={() => { navigator.clipboard.writeText(msg.content); }}
+                              <button onClick={() => { copyToClipboard(msg.content); }}
                                 className="px-2 py-1 text-[10px] text-gray-500 bg-white/90 border border-gray-200 rounded-md hover:bg-gray-100 hover:text-gray-700 backdrop-blur-sm">📋 Copy</button>
                               <button onClick={() => downloadFile(`response-${i}.md`, msg.content)}
                                 className="px-2 py-1 text-[10px] text-gray-500 bg-white/90 border border-gray-200 rounded-md hover:bg-gray-100 hover:text-gray-700 backdrop-blur-sm">↓ Save</button>
@@ -630,7 +646,7 @@
                             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mono text-[11px]">
                               <div className="flex justify-between items-center mb-2">
                                 <span className="text-gray-500 font-semibold text-[10px] uppercase tracking-wider">Stats</span>
-                                <button onClick={() => navigator.clipboard.writeText(statsText)}
+                                <button onClick={() => copyToClipboard(statsText)}
                                   className="text-[10px] text-gray-400 hover:text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded">Copy</button>
                               </div>
                               <div className="grid grid-cols-4 gap-x-4 gap-y-1.5">
