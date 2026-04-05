@@ -22,6 +22,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     body { background: #f9fafb; color: #111827; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     ::-webkit-scrollbar { width: 6px; }
@@ -79,6 +80,66 @@
       const days = Math.floor(hours / 24);
       if (days < 7) return `${days}d`;
       return new Date(dateStr).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    }
+
+    // Extract code blocks from markdown text
+    function extractCodeBlocks(text) {
+      const blocks = [];
+      const regex = /```(\w*)\n([\s\S]*?)```/g;
+      const lines = text.split('\n');
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const lang = match[1] || 'txt';
+        const code = match[2];
+        // Try to detect filename from line before the code block
+        const beforeIdx = text.substring(0, match.index).split('\n').length - 2;
+        let filename = null;
+        if (beforeIdx >= 0 && lines[beforeIdx]) {
+          const line = lines[beforeIdx].trim();
+          const fnMatch = line.match(/^(?:\*\*)?`?([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)`?(?:\*\*)?$/);
+          if (fnMatch) filename = fnMatch[1];
+        }
+        if (!filename) filename = `file-${blocks.length + 1}.${lang === 'javascript' ? 'js' : lang === 'python' ? 'py' : lang === 'typescript' ? 'ts' : lang || 'txt'}`;
+        blocks.push({ filename, lang, code });
+      }
+      return blocks;
+    }
+
+    function downloadFile(filename, content) {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function downloadAllAsZip(blocks) {
+      const zip = new JSZip();
+      const names = {};
+      for (const b of blocks) {
+        let name = b.filename;
+        if (names[name]) { const ext = name.split('.').pop(); name = name.replace(`.${ext}`, `-${names[name]}.${ext}`); }
+        names[b.filename] = (names[b.filename] || 0) + 1;
+        zip.file(name, b.code);
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'code-blocks.zip'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportConversation(conv, messages, format = 'md') {
+      if (format === 'md') {
+        let md = `# ${conv.title || 'Conversation'}\n\n`;
+        md += `Model: ${conv.model || '—'}\nDate: ${new Date(conv.createdAt).toLocaleString()}\n\n---\n\n`;
+        for (const m of messages) {
+          md += m.role === 'user' ? `**User:**\n${m.content}\n\n` : `**Assistant:**\n${m.content}\n\n---\n\n`;
+        }
+        downloadFile(`${conv.title || 'conversation'}.md`, md);
+      } else {
+        downloadFile(`${conv.title || 'conversation'}.json`, JSON.stringify({ ...conv, messages }, null, 2));
+      }
     }
 
     function formatGB(sizeKb) {
@@ -233,6 +294,8 @@
         let firstTokenTime = null;
         let tokenCount = 0;
         let chunkCount = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
 
         try {
           const body = {
@@ -277,7 +340,10 @@
                   tokenCount += delta.length > 0 ? 1 : 0; // approximate: 1 token per SSE delta
                   chunkCount++;
                   // Check for usage stats in the chunk
-                  if (parsed.usage?.completion_tokens) tokenCount = parsed.usage.completion_tokens;
+                  if (parsed.usage) {
+                    if (parsed.usage.completion_tokens) completionTokens = parsed.usage.completion_tokens;
+                    if (parsed.usage.prompt_tokens) promptTokens = parsed.usage.prompt_tokens;
+                  }
                   setMessages(prev => {
                     const updated = [...prev];
                     updated[updated.length - 1] = { ...updated[updated.length - 1], content: accumulated };
@@ -301,7 +367,8 @@
         const ttft = firstTokenTime ? (firstTokenTime - streamStartTime) / 1000 : null;
         const genTime = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : totalTime;
         const speed = genTime > 0 && chunkCount > 0 ? (chunkCount / genTime) : 0;
-        const stats = { ttft, speed, tokens: chunkCount, totalTime };
+        const chunkRate = genTime > 0 ? (chunkCount / genTime) : 0;
+        const stats = { ttft, speed, totalTime, genTime, promptTokens, completionTokens: completionTokens || chunkCount, chunks: chunkCount, chunkRate };
         setMessages(prev => {
           const msgIdx = prev.length - 1;
           if (convId) statsMapRef.current[`${convId}-${msgIdx}`] = stats;
@@ -350,8 +417,16 @@
                     <span className="text-[11px] text-gray-400">{timeAgo(c.updatedAt)}</span>
                   </div>
                   {c.lastMessage && <span className="text-[12px] text-gray-400 truncate">{c.lastMessage}</span>}
-                  <button onClick={e => { e.stopPropagation(); deleteConversation(c.id); }}
-                    className="hidden group-hover:block text-[10px] text-red-400 hover:text-red-600">Delete</button>
+                  <div className="hidden group-hover:flex justify-between items-center mt-0.5">
+                    <div className="flex gap-2">
+                      <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'md')); }}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ MD</button>
+                      <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'json')); }}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ JSON</button>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); deleteConversation(c.id); }}
+                      className="text-[10px] text-red-400 hover:text-red-600">Delete</button>
+                  </div>
                 </button>
               ))}
               {filteredConvs.length === 0 && (
@@ -504,16 +579,51 @@
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
                         </div>
+                        {/* Code block save buttons */}
+                        {!streaming && msg.content && (() => {
+                          const blocks = extractCodeBlocks(msg.content);
+                          if (blocks.length === 0) return null;
+                          return (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {blocks.map((b, j) => (
+                                <button key={j} onClick={() => downloadFile(b.filename, b.code)}
+                                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100">
+                                  💾 {b.filename}
+                                </button>
+                              ))}
+                              {blocks.length > 1 && (
+                                <button onClick={() => downloadAllAsZip(blocks)}
+                                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-indigo-500 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100">
+                                  📦 Save all (.zip)
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {/* Stats */}
                         {(() => {
                           const s = activeConvId && statsMapRef.current[`${activeConvId}-${i}`];
-                          return s ? (
-                            <div className="flex items-center gap-4 mono text-[11px]">
-                              {s.ttft != null && <span className="text-gray-400">TTFT <span className="text-amber-500 font-medium">{s.ttft.toFixed(1)}s</span></span>}
-                              {s.speed > 0 && <span className="text-gray-400">Speed <span className="text-emerald-500 font-medium">{s.speed.toFixed(1)} tk/s</span></span>}
-                              {s.tokens > 0 && <span className="text-gray-400">Tokens <span className="text-indigo-400 font-medium">{s.tokens}</span></span>}
-                              {s.totalTime > 0 && <span className="text-gray-400">Total <span className="text-gray-500">{s.totalTime.toFixed(1)}s</span></span>}
+                          if (!s) return null;
+                          const statsText = `Total: ${s.totalTime?.toFixed(2)}s | TTFT: ${s.ttft?.toFixed(3)}s | Gen: ${s.genTime?.toFixed(2)}s | Speed: ${s.speed?.toFixed(1)} tk/s | Prompt: ${s.promptTokens || '—'} tk | Completion: ${s.completionTokens} tk | Chunks: ${s.chunks} | Chunk rate: ${s.chunkRate?.toFixed(1)}/s`;
+                          return (
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mono text-[11px]">
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="text-gray-500 font-semibold text-[10px] uppercase tracking-wider">Stats</span>
+                                <button onClick={() => navigator.clipboard.writeText(statsText)}
+                                  className="text-[10px] text-gray-400 hover:text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded">Copy</button>
+                              </div>
+                              <div className="grid grid-cols-4 gap-x-4 gap-y-1.5">
+                                <div className="flex flex-col"><span className="text-gray-400">Total</span><span className="text-gray-700 font-medium">{s.totalTime?.toFixed(2)}s</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">TTFT</span><span className="text-amber-500 font-medium">{s.ttft?.toFixed(3)}s</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Generation</span><span className="text-gray-700 font-medium">{s.genTime?.toFixed(2)}s</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Speed</span><span className="text-emerald-500 font-medium">{s.speed?.toFixed(1)} tk/s</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Prompt</span><span className="text-gray-700 font-medium">{s.promptTokens || '—'} tk</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Completion</span><span className="text-indigo-400 font-medium">{s.completionTokens} tk</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Chunks</span><span className="text-gray-700 font-medium">{s.chunks}</span></div>
+                                <div className="flex flex-col"><span className="text-gray-400">Chunk rate</span><span className="text-gray-700 font-medium">{s.chunkRate?.toFixed(1)}/s</span></div>
+                              </div>
                             </div>
-                          ) : null;
+                          );
                         })()}
                       </div>
                     )}
