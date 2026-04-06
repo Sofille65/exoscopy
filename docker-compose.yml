@@ -1,12 +1,16 @@
 services:
   exoscopy:
+    image: ghcr.io/sofille65/exoscopy:latest
     build: .
     container_name: exoscopy
     ports:
       - "3456:3456"
     restart: unless-stopped
     volumes:
-      - ~/.ssh:/root/.ssh:ro
-      - ./data:/app/data
+      - ~/.ssh:/root/.ssh
+      - exoscopy-data:/app/data
     environment:
       - NODE_ENV=production
+
+volumes:
+  exoscopy-data:
