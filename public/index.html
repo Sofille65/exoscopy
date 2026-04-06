@@ -907,7 +907,7 @@
 
     function ModelsPage({ clusterStatus }) {
       const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
-      const [models, setModels] = useState([]);
+      const [chatModels, setChatModels] = useState([]);
       const [loadModel, setLoadModel] = useState('');
       const [sharding, setSharding] = useState('Pipeline');
       const [loadStatus, setLoadStatus] = useState(null);
@@ -923,7 +923,7 @@
             setLoadStatus({ status: 'running', model: d.activeModel });
           }
         }).catch(() => {});
-        fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
+        fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setChatModels(d.models || [])).catch(() => {});
       }
       function refreshSyncs() {
         fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
@@ -1123,7 +1123,7 @@
                   <select value={loadModel} onChange={e => setLoadModel(e.target.value)}
                     className="mono text-xs px-3 py-2.5 border border-gray-200 rounded-lg bg-white text-gray-900">
                     <option value="">Select a model...</option>
-                    {models.map(m => (
+                    {chatModels.map(m => (
                       <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
                     ))}
                   </select>
