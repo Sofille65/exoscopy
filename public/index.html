@@ -1008,6 +1008,7 @@
                           <span className="mono text-[9px] text-gray-400">GPU {metrics?.gpuPct ?? '—'}%</span>
                           <span className="mono text-[9px] text-gray-400">{metrics?.tempC ?? '—'}°C</span>
                           <span className="mono text-[9px] text-gray-400">{metrics?.watts ?? '—'}W</span>
+                          <div className="flex-1" />
                           {diskInfo[node.name] && (() => {
                             const free = diskInfo[node.name].freeGB;
                             const total = diskInfo[node.name].totalGB || (free + 1);
