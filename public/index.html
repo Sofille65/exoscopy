@@ -907,11 +907,10 @@
 
     function ModelsPage({ clusterStatus }) {
       const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
+      const [models, setModels] = useState([]);
       const [loadModel, setLoadModel] = useState('');
       const [sharding, setSharding] = useState('Pipeline');
       const [loadStatus, setLoadStatus] = useState(null);
-      const [showImport, setShowImport] = useState(false);
-      const [importForm, setImportForm] = useState({ sourceIp: '', sourceUser: '', sourcePath: '', targetNode: '' });
       const [activeSyncs, setActiveSyncs] = useState([]);
       const [deleteSelection, setDeleteSelection] = useState(new Set()); // "modelId::nodeName"
       const [deleting, setDeleting] = useState(false);
@@ -924,6 +923,7 @@
             setLoadStatus({ status: 'running', model: d.activeModel });
           }
         }).catch(() => {});
+        fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
       }
       function refreshSyncs() {
         fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
@@ -1120,9 +1120,13 @@
               <div className="flex gap-4 items-end">
                 <div className="flex-1 flex flex-col gap-1.5">
                   <span className="text-xs text-gray-500 font-medium">Model</span>
-                  <input type="text" value={loadModel} onChange={e => setLoadModel(e.target.value)}
-                    placeholder="mlx-community/ModelName"
-                    className="mono text-xs px-3 py-2.5 border border-gray-200 rounded-lg bg-white" />
+                  <select value={loadModel} onChange={e => setLoadModel(e.target.value)}
+                    className="mono text-xs px-3 py-2.5 border border-gray-200 rounded-lg bg-white text-gray-900">
+                    <option value="">Select a model...</option>
+                    {models.map(m => (
+                      <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs text-gray-500 font-medium">Sharding</span>
@@ -1164,55 +1168,6 @@
             </div>
           </div>
 
-          {/* Import Custom Model */}
-          <div className="px-10 pb-6">
-            <button onClick={() => setShowImport(!showImport)}
-              className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
-              {showImport ? '▾' : '▸'} Import Custom Model (from external machine)
-            </button>
-            {showImport && (
-              <div className="mt-3 bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
-                <span className="text-sm font-semibold text-gray-900">Import from external source via SSH + rsync</span>
-                <div className="flex gap-4">
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <span className="text-xs text-gray-500 font-medium">Source IP</span>
-                    <input type="text" value={importForm.sourceIp} onChange={e => setImportForm(f => ({ ...f, sourceIp: e.target.value }))}
-                      placeholder="192.168.86.50" className="mono text-xs px-3 py-2 border border-gray-200 rounded-lg bg-white" />
-                  </div>
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <span className="text-xs text-gray-500 font-medium">SSH User</span>
-                    <input type="text" value={importForm.sourceUser} onChange={e => setImportForm(f => ({ ...f, sourceUser: e.target.value }))}
-                      placeholder="sophie" className="mono text-xs px-3 py-2 border border-gray-200 rounded-lg bg-white" />
-                  </div>
-                  <div className="flex flex-col gap-1.5 flex-[2]">
-                    <span className="text-xs text-gray-500 font-medium">Model path on source</span>
-                    <input type="text" value={importForm.sourcePath} onChange={e => setImportForm(f => ({ ...f, sourcePath: e.target.value }))}
-                      placeholder="/Volumes/models_store/exo/mlx-community--ModelName" className="mono text-xs px-3 py-2 border border-gray-200 rounded-lg bg-white" />
-                  </div>
-                </div>
-                <div className="flex gap-4 items-end">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs text-gray-500 font-medium">Target node</span>
-                    <select value={importForm.targetNode} onChange={e => setImportForm(f => ({ ...f, targetNode: e.target.value }))}
-                      className="text-xs px-3 py-2 border border-gray-200 rounded-lg bg-white">
-                      <option value="">Select...</option>
-                      {nodeNames.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                  <button onClick={async () => {
-                    if (!importForm.sourceIp || !importForm.sourceUser || !importForm.sourcePath || !importForm.targetNode) return;
-                    await fetch('/api/models/import', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(importForm),
-                    });
-                  }} disabled={!importForm.sourceIp || !importForm.sourcePath || !importForm.targetNode}
-                    className="px-4 py-2 bg-exo rounded-lg text-xs font-semibold text-gray-900 hover:brightness-95 disabled:opacity-40">
-                    Start Import
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       );
     }
