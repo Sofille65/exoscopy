@@ -1316,8 +1316,19 @@
       const [paramsFilter, setParamsFilter] = useState('');
       const [directId, setDirectId] = useState('');
       const [rawResults, setRawResults] = useState([]);
-      const [availableQuants, setAvailableQuants] = useState([]);
-      const [availableParams, setAvailableParams] = useState([]);
+
+      // Compute available quants/params based on current cross-filter
+      const availableQuants = useMemo(() => {
+        let pool = rawResults;
+        if (paramsFilter) pool = pool.filter(m => String(m.namedParams) === String(paramsFilter));
+        return [...new Set(pool.map(m => m.quantBits).filter(Boolean))].sort((a, b) => a - b);
+      }, [rawResults, paramsFilter]);
+
+      const availableParams = useMemo(() => {
+        let pool = rawResults;
+        if (quantFilter) pool = pool.filter(m => String(m.quantBits) === String(quantFilter) || (m.precision && m.precision.toLowerCase() === quantFilter.toLowerCase()));
+        return [...new Set(pool.map(m => m.namedParams).filter(Boolean))].sort((a, b) => a - b);
+      }, [rawResults, quantFilter]);
 
       async function search() {
         if (!query.trim()) return;
@@ -1329,23 +1340,17 @@
           const res = await fetch(`/api/hub/search?${params}`);
           const data = await res.json();
           setRawResults(data);
-          // Extract available quants and params for filter dropdowns
-          const quants = [...new Set(data.map(m => m.quantBits).filter(Boolean))].sort((a, b) => a - b);
-          const parms = [...new Set(data.map(m => m.namedParams).filter(Boolean))].sort((a, b) => a - b);
-          setAvailableQuants(quants);
-          setAvailableParams(parms);
-          applyFilters(data, '', '');
+          setResults(data);
         } catch (e) {
           console.error('HF search error:', e);
         }
         setLoading(false);
       }
 
-      function applyFilters(data, qf, pf) {
-        let filtered = data || rawResults;
-        if (qf) filtered = filtered.filter(m => String(m.quantBits) === String(qf) || (m.precision && m.precision.toLowerCase() === qf.toLowerCase()));
-        if (pf) filtered = filtered.filter(m => String(m.namedParams) === String(pf));
-        // Sort
+      function applyFilters() {
+        let filtered = [...rawResults];
+        if (quantFilter) filtered = filtered.filter(m => String(m.quantBits) === String(quantFilter) || (m.precision && m.precision.toLowerCase() === quantFilter.toLowerCase()));
+        if (paramsFilter) filtered = filtered.filter(m => String(m.namedParams) === String(paramsFilter));
         if (sort === 'estimatedSizeGB') {
           filtered.sort((a, b) => sortDir === 'desc' ? (b.estimatedSizeGB || 0) - (a.estimatedSizeGB || 0) : (a.estimatedSizeGB || 0) - (b.estimatedSizeGB || 0));
         }
@@ -1442,7 +1447,7 @@
                 {sortDir === 'desc' ? '↓' : '↑'}
               </button>
             </div>
-            <button onClick={() => applyFilters(null, quantFilter, paramsFilter)}
+            <button onClick={applyFilters}
               className="px-3 py-1 bg-exo rounded-md text-[11px] font-semibold text-gray-900 hover:brightness-95">Apply</button>
           </div>
 
