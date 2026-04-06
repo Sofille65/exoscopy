@@ -1,5 +1,5 @@
 FROM node:20-alpine
-RUN apk add --no-cache openssh-client
+RUN apk add --no-cache openssh-client openssh-keygen sshpass rsync
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production

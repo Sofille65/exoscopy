@@ -1315,6 +1315,228 @@ app.get('/api/hub/search', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSH KEY SETUP API
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /api/ssh/test — test SSH connectivity to a node
+// body: { ip, user, password? }
+app.post('/api/ssh/test', async (req, res) => {
+  const { ip, user } = req.body;
+  if (!ip || !user) return res.status(400).json({ error: 'ip and user required' });
+
+  // Try key-based first
+  const r = await new Promise(resolve => {
+    exec(`ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${user}@${ip} 'echo OK'`,
+      { timeout: 5000, encoding: 'utf8' },
+      (err, stdout) => resolve({ ok: !err && stdout.trim() === 'OK', method: 'key' })
+    );
+  });
+
+  res.json({ ip, user, connected: r.ok, method: r.ok ? 'key' : 'none' });
+});
+
+// POST /api/ssh/setup-keys — generate key pair and install on all nodes via sshpass
+// body: { nodes: [{ ip, user, password }] }
+app.post('/api/ssh/setup-keys', async (req, res) => {
+  const { nodes } = req.body;
+  if (!nodes || !Array.isArray(nodes)) return res.status(400).json({ error: 'nodes array required' });
+
+  const keyPath = '/root/.ssh/id_ed25519';
+  const results = [];
+
+  // Generate key if not exists
+  try {
+    if (!fs.existsSync(keyPath)) {
+      const { execSync } = require('child_process');
+      execSync(`ssh-keygen -t ed25519 -f ${keyPath} -N "" -q`, { encoding: 'utf8' });
+      console.log('[ssh] Generated new SSH key pair');
+    }
+  } catch (e) {
+    return res.status(500).json({ error: `Key generation failed: ${e.message}` });
+  }
+
+  // Install key on each node
+  for (const node of nodes) {
+    const { ip, user, password } = node;
+    if (!ip || !user || !password) {
+      results.push({ ip, ok: false, error: 'Missing ip, user, or password' });
+      continue;
+    }
+
+    try {
+      // Use sshpass to copy the key
+      const r = await new Promise(resolve => {
+        exec(
+          `sshpass -p '${password.replace(/'/g, "'\\''")}' ssh-copy-id -o StrictHostKeyChecking=accept-new -i ${keyPath}.pub ${user}@${ip}`,
+          { timeout: 15000, encoding: 'utf8' },
+          (err, stdout, stderr) => {
+            if (err) resolve({ ok: false, error: stderr || err.message });
+            else resolve({ ok: true });
+          }
+        );
+      });
+
+      // Verify
+      if (r.ok) {
+        const verify = await new Promise(resolve => {
+          exec(`ssh -o ConnectTimeout=3 -o BatchMode=yes ${user}@${ip} 'echo OK'`,
+            { timeout: 5000, encoding: 'utf8' },
+            (err, stdout) => resolve({ ok: !err && stdout.trim() === 'OK' })
+          );
+        });
+        results.push({ ip, user, ok: verify.ok, error: verify.ok ? null : 'Key installed but verification failed' });
+      } else {
+        results.push({ ip, user, ok: false, error: r.error });
+      }
+    } catch (e) {
+      results.push({ ip, user, ok: false, error: e.message });
+    }
+  }
+
+  console.log('[ssh] Key setup results:', results.map(r => `${r.ip}: ${r.ok ? 'OK' : r.error}`).join(', '));
+  res.json({ results });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNC API — rsync models between nodes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Active syncs tracking
+const activeSyncs = {};
+
+// POST /api/models/sync — rsync a model from source node to target nodes
+// body: { modelId, sourceNode, targetNodes: [name], modelPath? }
+app.post('/api/models/sync', async (req, res) => {
+  const { modelId, sourceNode, targetNodes } = req.body;
+  if (!modelId || !sourceNode || !targetNodes?.length) {
+    return res.status(400).json({ error: 'modelId, sourceNode, and targetNodes required' });
+  }
+
+  const settings = getSettings();
+  const source = settings.nodes.find(n => n.name === sourceNode);
+  if (!source) return res.status(400).json({ error: `Source node ${sourceNode} not found` });
+
+  const syncId = `sync-${Date.now()}`;
+  const sshUser = settings.sshUser || 'admin';
+  // exo model path: ~/.exo/models/<modelId-with-dashes>
+  const modelDir = modelId.replace('/', '--');
+  const modelPath = `~/.exo/models/${modelDir}`;
+
+  activeSyncs[syncId] = {
+    id: syncId, modelId, sourceNode, targetNodes,
+    status: 'syncing', startedAt: new Date().toISOString(),
+    progress: {},
+  };
+
+  res.json({ syncId, status: 'started' });
+
+  // Run rsync to each target in parallel
+  for (const targetName of targetNodes) {
+    const target = settings.nodes.find(n => n.name === targetName);
+    if (!target) {
+      activeSyncs[syncId].progress[targetName] = { status: 'error', error: 'Node not found' };
+      io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'error', error: 'Node not found' });
+      continue;
+    }
+
+    activeSyncs[syncId].progress[targetName] = { status: 'syncing', percent: 0 };
+    io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'syncing', percent: 0 });
+
+    // rsync from source to target via SSH
+    const cmd = `rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${sshUser}@${source.ip}:${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/`;
+
+    const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    child.stdout.on('data', (buf) => {
+      const lines = buf.toString().split('\n');
+      for (const line of lines) {
+        // Parse rsync progress: "  1,234,567  45%  12.34MB/s"
+        const match = line.match(/(\d+)%/);
+        if (match) {
+          const percent = parseInt(match[1]);
+          activeSyncs[syncId].progress[targetName].percent = percent;
+          io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'syncing', percent });
+        }
+      }
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        activeSyncs[syncId].progress[targetName] = { status: 'done', percent: 100 };
+        io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'done', percent: 100 });
+      } else {
+        activeSyncs[syncId].progress[targetName] = { status: 'error', error: `rsync exit ${code}` };
+        io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'error' });
+      }
+
+      // Check if all targets done
+      const allDone = targetNodes.every(n => {
+        const p = activeSyncs[syncId].progress[n];
+        return p && (p.status === 'done' || p.status === 'error');
+      });
+      if (allDone) {
+        activeSyncs[syncId].status = 'done';
+        io.emit('sync:complete', { syncId, modelId });
+      }
+    });
+  }
+});
+
+// GET /api/models/syncs — list active syncs
+app.get('/api/models/syncs', (req, res) => {
+  res.json(Object.values(activeSyncs));
+});
+
+// POST /api/models/import — import a model from an external source via rsync
+// body: { sourceIp, sourceUser, sourcePassword?, sourcePath, targetNode, modelId? }
+app.post('/api/models/import', async (req, res) => {
+  const { sourceIp, sourceUser, sourcePath, targetNode, modelId } = req.body;
+  if (!sourceIp || !sourceUser || !sourcePath || !targetNode) {
+    return res.status(400).json({ error: 'sourceIp, sourceUser, sourcePath, targetNode required' });
+  }
+
+  const settings = getSettings();
+  const target = settings.nodes.find(n => n.name === targetNode);
+  if (!target) return res.status(400).json({ error: `Target node ${targetNode} not found` });
+
+  const sshUser = settings.sshUser || 'admin';
+  // Derive model dir name from source path
+  const dirName = path.basename(sourcePath);
+  const targetPath = `~/.exo/models/${dirName}`;
+
+  const importId = `import-${Date.now()}`;
+  activeSyncs[importId] = {
+    id: importId, type: 'import', modelId: modelId || dirName,
+    sourceIp, targetNode, status: 'importing', startedAt: new Date().toISOString(),
+    progress: { percent: 0 },
+  };
+
+  res.json({ importId, status: 'started' });
+
+  // rsync from external source to target node
+  const cmd = `rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${sourceUser}@${sourceIp}:${sourcePath}/ ${sshUser}@${target.ip}:${targetPath}/`;
+
+  const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  child.stdout.on('data', (buf) => {
+    const lines = buf.toString().split('\n');
+    for (const line of lines) {
+      const match = line.match(/(\d+)%/);
+      if (match) {
+        activeSyncs[importId].progress.percent = parseInt(match[1]);
+        io.emit('sync:progress', { syncId: importId, modelId: modelId || dirName, node: targetNode, status: 'importing', percent: parseInt(match[1]) });
+      }
+    }
+  });
+
+  child.on('close', (code) => {
+    activeSyncs[importId].status = code === 0 ? 'done' : 'error';
+    activeSyncs[importId].progress.percent = code === 0 ? 100 : 0;
+    io.emit('sync:complete', { syncId: importId, modelId: modelId || dirName, status: code === 0 ? 'done' : 'error' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DISCOVER API — scan local /24 subnet for EXO nodes (port 52415)
 // ─────────────────────────────────────────────────────────────────────────────
 
