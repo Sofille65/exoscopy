@@ -1442,8 +1442,10 @@ app.post('/api/models/sync', async (req, res) => {
     activeSyncs[syncId].progress[targetName] = { status: 'syncing', percent: 0 };
     io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'syncing', percent: 0 });
 
-    // rsync from source to target via SSH
-    const cmd = `rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${sshUser}@${source.ip}:${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/`;
+    // SSH into source node, then rsync from there to target
+    // (rsync can't do remote-to-remote, must run from one side)
+    const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sshUser}@${source.ip} "rsync -avz --progress ${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/"`;
+    console.log(`[sync] ${model.id}: ${source.ip} → ${target.ip} via: ${cmd}`);
 
     const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -1513,8 +1515,9 @@ app.post('/api/models/import', async (req, res) => {
 
   res.json({ importId, status: 'started' });
 
-  // rsync from external source to target node
-  const cmd = `rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${sourceUser}@${sourceIp}:${sourcePath}/ ${sshUser}@${target.ip}:${targetPath}/`;
+  // SSH into source machine, rsync from there to target node
+  const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sourceUser}@${sourceIp} "rsync -avz --progress ${sourcePath}/ ${sshUser}@${target.ip}:${targetPath}/"`;
+  console.log(`[import] ${sourcePath} → ${target.ip}:${targetPath} via: ${cmd}`);
 
   const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
 

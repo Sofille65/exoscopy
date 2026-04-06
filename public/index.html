@@ -891,6 +891,7 @@
       const [loadStatus, setLoadStatus] = useState(null);
       const [showImport, setShowImport] = useState(false);
       const [importForm, setImportForm] = useState({ sourceIp: '', sourceUser: '', sourcePath: '', targetNode: '' });
+      const [activeSyncs, setActiveSyncs] = useState([]);
 
       useEffect(() => {
         fetch('/api/models/matrix').then(r => r.json()).then(d => {
@@ -900,6 +901,16 @@
             setLoadStatus({ status: 'running', model: d.activeModel });
           }
         }).catch(() => {});
+        fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
+        // Listen for sync progress
+        const onSyncProgress = () => fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
+        socket.on('sync:progress', onSyncProgress);
+        socket.on('sync:complete', () => {
+          onSyncProgress();
+          // Refresh matrix after sync complete
+          setTimeout(() => fetch('/api/models/matrix').then(r => r.json()).then(setMatrixData).catch(() => {}), 2000);
+        });
+        return () => { socket.off('sync:progress', onSyncProgress); socket.off('sync:complete'); };
       }, []);
 
       const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
@@ -946,7 +957,7 @@
             <div className="flex gap-2">
               <button onClick={() => {/* TODO */}}
                 className="px-4 py-2 bg-exo rounded-lg text-[13px] font-semibold text-gray-900 hover:brightness-95">+ Download</button>
-              <button className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50">+ Add custom model</button>
+              <button onClick={() => setShowImport(true)} className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50">+ Add custom model</button>
             </div>
           </div>
 
@@ -1007,6 +1018,35 @@
               })}
             </div>
           </div>
+          )}
+
+          {/* Active syncs */}
+          {activeSyncs.filter(s => s.status === 'syncing' || s.status === 'importing').length > 0 && (
+            <div className="px-10 pb-4 flex flex-col gap-2">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Syncing</span>
+              {activeSyncs.filter(s => s.status === 'syncing' || s.status === 'importing').map(s => (
+                <div key={s.id} className="bg-white border border-indigo-200 rounded-xl p-4 flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className="px-1.5 py-0.5 bg-indigo-50 rounded text-[10px] font-semibold text-indigo-500">RSYNC</div>
+                      <span className="text-[13px] font-medium text-gray-900">{s.modelId}</span>
+                    </div>
+                    <span className="mono text-[11px] text-gray-400">{s.sourceNode} → {(s.targetNodes || []).join(', ')}</span>
+                  </div>
+                  {s.progress && Object.entries(s.progress).map(([node, p]) => (
+                    <div key={node} className="flex items-center gap-3">
+                      <span className="text-[11px] text-gray-500 w-16">{node}</span>
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full">
+                        <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${p.percent || 0}%` }} />
+                      </div>
+                      <span className={`mono text-[11px] ${p.status === 'done' ? 'text-emerald-500' : p.status === 'error' ? 'text-red-500' : 'text-indigo-500'}`}>
+                        {p.status === 'done' ? '✓' : p.status === 'error' ? '✗ ' + (p.error || '') : `${p.percent || 0}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           )}
 
           {/* Load Model section */}
