@@ -885,43 +885,35 @@
     // ═══════════════════════════════════════════════════════════════════
 
     function ModelsPage({ clusterStatus }) {
-      const [nodeModels, setNodeModels] = useState({});
-      const [activeModel, setActiveModel] = useState(null);
+      const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
       const [loadModel, setLoadModel] = useState('');
       const [sharding, setSharding] = useState('Pipeline');
       const [loadStatus, setLoadStatus] = useState(null);
 
       useEffect(() => {
-        // Scan models on each node
-        fetch('/api/monitoring/exo-models').then(r => r.json()).then(d => {
-          // This gives intersection; we need per-node data
-        }).catch(() => {});
-        fetch('/api/chat/active-model?engine=exo1').then(r => r.json()).then(d => {
-          if (d.activeModel) setActiveModel(d.activeModel);
-        }).catch(() => {});
-        fetch('/api/monitoring/status').then(r => r.json()).then(d => {
-          if (d.instances?.[0]?.model) {
-            setActiveModel(d.instances[0].model);
-            setLoadModel(d.instances[0].model);
-            setLoadStatus({ status: 'running', model: d.instances[0].model, nodes: d.instances[0]?.shardCount || 0 });
+        fetch('/api/models/matrix').then(r => r.json()).then(d => {
+          setMatrixData(d);
+          if (d.activeModel) {
+            setLoadModel(d.activeModel);
+            setLoadStatus({ status: 'running', model: d.activeModel });
           }
         }).catch(() => {});
       }, []);
 
-      const nodes = clusterStatus?.nodes || [];
+      const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
 
       async function handleLoad() {
         if (!loadModel) return;
         setLoadStatus({ status: 'loading', model: loadModel });
         try {
+          const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 1;
           const res = await fetch('/api/monitoring/load', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modelId: loadModel, sharding, minNodes: nodes.filter(n => n.online).length || 1 }),
+            body: JSON.stringify({ modelId: loadModel, sharding, minNodes: onlineCount }),
           });
           const data = await res.json();
           if (res.ok) {
             setLoadStatus({ status: 'running', model: loadModel });
-            setActiveModel(loadModel);
           } else {
             setLoadStatus({ status: 'failed', model: loadModel, error: data.error });
           }
@@ -934,8 +926,12 @@
         try {
           await fetch('/api/monitoring/purge', { method: 'POST' });
           setLoadStatus(null);
-          setActiveModel(null);
         } catch (e) {}
+      }
+
+      function modelOnNode(modelId, nodeName) {
+        const nodeList = matrix[nodeName] || [];
+        return nodeList.find(m => m.id === modelId);
       }
 
       return (
@@ -943,19 +939,67 @@
           <div className="flex justify-between items-center px-10 pt-5 pb-4">
             <div className="flex items-baseline gap-3">
               <span className="text-[22px] font-bold text-gray-900">Models</span>
-              <span className="text-[13px] text-gray-400">{nodes.length} nodes</span>
+              <span className="text-[13px] text-gray-400">{models.length} models across {nodeNames.length} nodes</span>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => {/* TODO: HF search modal */}}
+              <button onClick={() => {/* TODO */}}
                 className="px-4 py-2 bg-exo rounded-lg text-[13px] font-semibold text-gray-900 hover:brightness-95">+ Download</button>
               <button className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50">+ Add custom model</button>
             </div>
           </div>
 
-          {/* Models will show as a simple list for now — full matrix requires per-node scan */}
-          <div className="px-10 pb-4 text-xs text-gray-400">
-            Model matrix view requires SSH scan of each node. Configure nodes in Settings first.
+          {/* Model matrix table */}
+          {models.length > 0 && (
+          <div className="px-10 pb-4">
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {/* Header */}
+              <div className="flex px-5 py-3 bg-gray-50 border-b border-gray-200">
+                <div className="flex-[2.5]"><span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Model</span></div>
+                {nodeNames.map(name => (
+                  <div key={name} className="flex-1 text-center flex flex-col items-center gap-0.5">
+                    <span className="text-xs font-semibold text-gray-700">{name}</span>
+                    {diskInfo[name] && <span className="mono text-[10px] text-gray-400">{diskInfo[name].freeGB} GB free</span>}
+                  </div>
+                ))}
+                <div className="w-[70px]" />
+              </div>
+              {/* Rows */}
+              {models.map(model => {
+                const isActive = activeModel === model.id;
+                const presentOn = nodeNames.filter(n => modelOnNode(model.id, n));
+                const missingOn = nodeNames.filter(n => !modelOnNode(model.id, n));
+                return (
+                  <div key={model.id} className={`flex px-5 py-3.5 border-b border-gray-100 items-center ${isActive ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
+                    <div className="flex-[2.5] flex flex-col gap-0.5">
+                      <div className="flex items-center gap-1.5">
+                        {isActive && <span className="text-[11px]">⚡</span>}
+                        <span className={`text-[13px] font-medium text-gray-900 ${isActive ? 'font-semibold' : ''}`}>{model.id.split('/').pop()}</span>
+                      </div>
+                      <span className="mono text-[11px] text-gray-400">{model.id.split('/')[0]} · {model.sizeGB} GB</span>
+                    </div>
+                    {nodeNames.map(name => {
+                      const m = modelOnNode(model.id, name);
+                      return (
+                        <div key={name} className="flex-1 text-center">
+                          {m ? (
+                            <span className="text-emerald-500 text-sm">✓ <span className="mono text-[11px] text-gray-500">{m.sizeGB} GB</span></span>
+                          ) : (
+                            <span className="mono text-[11px] text-gray-300">—</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div className="w-[70px] text-right">
+                      {missingOn.length > 0 && missingOn.length < nodeNames.length && (
+                        <span className="text-[11px] text-indigo-500 font-medium cursor-pointer hover:underline">Sync</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
+          )}
 
           {/* Load Model section */}
           <div className="px-10 pb-6">

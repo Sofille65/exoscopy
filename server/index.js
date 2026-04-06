@@ -430,6 +430,101 @@ app.get('/api/monitoring/exo-node-metrics', async (req, res) => {
   }
 });
 
+// GET /api/models/matrix — models per node (from /state DownloadCompleted, no SSH)
+app.get('/api/models/matrix', async (req, res) => {
+  const settings = getSettings();
+  const exoPort = settings.exoPort || 52415;
+  const firstNode = settings.nodes[0];
+  if (!firstNode) return res.json({ nodes: [], models: [], matrix: {} });
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/state`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ nodes: [], models: [], matrix: {} });
+    const state = await r.json();
+
+    const downloads = state.downloads || {};
+    const nodeNetwork = state.nodeNetwork || {};
+
+    // Map peerId → IP via network interfaces
+    const peerToIp = {};
+    for (const [peerId, netData] of Object.entries(nodeNetwork)) {
+      for (const iface of (netData.interfaces || [])) {
+        if (iface.ipAddress) {
+          const matchNode = settings.nodes.find(n => n.ip === iface.ipAddress);
+          if (matchNode) peerToIp[peerId] = iface.ipAddress;
+        }
+      }
+    }
+
+    // Map IP → node name
+    const ipToName = {};
+    for (const n of settings.nodes) ipToName[n.ip] = n.name;
+
+    // Build models per node
+    const nodeModels = {}; // nodeName → [{ id, sizeGB }]
+    for (const [peerId, nodeDownloads] of Object.entries(downloads)) {
+      const ip = peerToIp[peerId];
+      const name = ip ? (ipToName[ip] || ip) : null;
+      if (!name) continue;
+      if (!nodeModels[name]) nodeModels[name] = [];
+      for (const entry of nodeDownloads) {
+        if (entry.DownloadCompleted) {
+          const meta = entry.DownloadCompleted.shardMetadata;
+          const modelId = meta?.PipelineShardMetadata?.modelCard?.modelId
+                       || meta?.TensorShardMetadata?.modelCard?.modelId;
+          const sizeBytes = meta?.PipelineShardMetadata?.modelCard?.storageSize?.inBytes
+                         || meta?.TensorShardMetadata?.modelCard?.storageSize?.inBytes || 0;
+          if (modelId) nodeModels[name].push({ id: modelId, sizeGB: Math.round(sizeBytes / 1073741824) });
+        }
+      }
+    }
+
+    // Build unique sorted model list
+    const allModels = new Map();
+    for (const models of Object.values(nodeModels)) {
+      for (const m of models) {
+        if (!allModels.has(m.id)) allModels.set(m.id, m.sizeGB);
+      }
+    }
+    const modelList = [...allModels.entries()]
+      .map(([id, sizeGB]) => ({ id, sizeGB }))
+      .sort((a, b) => b.sizeGB - a.sizeGB);
+
+    // Get active model
+    let activeModel = null;
+    const instances = state.instances || {};
+    for (const inst of Object.values(instances)) {
+      const wrapperKey = Object.keys(inst).find(k => k.endsWith('Instance'));
+      const inner = wrapperKey ? inst[wrapperKey] : inst;
+      if (inner?.shardAssignments?.modelId) { activeModel = inner.shardAssignments.modelId; break; }
+    }
+
+    // Get disk info per node
+    const nodeDisk = state.nodeDisk || {};
+    const diskInfo = {};
+    for (const [peerId, disk] of Object.entries(nodeDisk)) {
+      const ip = peerToIp[peerId];
+      const name = ip ? (ipToName[ip] || ip) : null;
+      if (name && disk.available) {
+        diskInfo[name] = { freeGB: Math.round(disk.available.inBytes / 1073741824) };
+      }
+    }
+
+    res.json({
+      nodes: settings.nodes.map(n => n.name),
+      models: modelList,
+      matrix: nodeModels,
+      activeModel,
+      diskInfo,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, nodes: [], models: [], matrix: {} });
+  }
+});
+
 // GET /api/monitoring/exo-models — models available via exo API (HTTP, no SSH scan)
 app.get('/api/monitoring/exo-models', async (req, res) => {
   const settings = getSettings();
