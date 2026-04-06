@@ -1445,7 +1445,7 @@ app.post('/api/models/sync', async (req, res) => {
     // SSH into source node, then rsync from there to target
     // (rsync can't do remote-to-remote, must run from one side)
     const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sshUser}@${source.ip} "rsync -avz --progress ${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/"`;
-    console.log(`[sync] ${model.id}: ${source.ip} → ${target.ip} via: ${cmd}`);
+    console.log(`[sync] ${modelId}: ${source.ip} → ${target.ip} via: ${cmd}`);
 
     const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
 
