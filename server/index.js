@@ -511,7 +511,10 @@ app.get('/api/models/matrix', async (req, res) => {
       const ip = peerToIp[peerId];
       const name = ip ? (ipToName[ip] || ip) : null;
       if (name && disk.available) {
-        diskInfo[name] = { freeGB: Math.round(disk.available.inBytes / 1073741824) };
+        diskInfo[name] = {
+          freeGB: Math.round(disk.available.inBytes / 1073741824),
+          totalGB: disk.total ? Math.round(disk.total.inBytes / 1073741824) : null,
+        };
       }
     }
 

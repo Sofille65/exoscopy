@@ -1004,10 +1004,17 @@
                           <div className="flex justify-between"><span className="text-[10px] text-gray-500">RAM</span><span className="mono text-[10px] text-gray-500">{ram ? `${ram.used}/${ram.total} GB` : '—'}</span></div>
                           <div className="h-[3px] bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${ram?.percent || 0}%`, minWidth: '4px' }} /></div>
                         </div>
-                        <div className="flex gap-3">
+                        <div className="flex gap-3 items-center">
                           <span className="mono text-[9px] text-gray-400">GPU {metrics?.gpuPct ?? '—'}%</span>
                           <span className="mono text-[9px] text-gray-400">{metrics?.tempC ?? '—'}°C</span>
                           <span className="mono text-[9px] text-gray-400">{metrics?.watts ?? '—'}W</span>
+                          {diskInfo[node.name] && (() => {
+                            const free = diskInfo[node.name].freeGB;
+                            const total = diskInfo[node.name].totalGB || (free + 1);
+                            const usedPct = total > 0 ? Math.round((1 - free / total) * 100) : 0;
+                            const color = usedPct > 90 ? 'border-red-400 text-red-600' : usedPct > 75 ? 'border-amber-400 text-amber-600' : 'border-emerald-400 text-emerald-600';
+                            return <span className={`mono text-[9px] px-1.5 py-0.5 border rounded ${color}`}>{free} GB free</span>;
+                          })()}
                         </div>
                       </>
                     ) : (
