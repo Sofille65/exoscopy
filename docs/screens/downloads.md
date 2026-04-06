@@ -1,33 +1,65 @@
 # ExoScopy — Downloads Screen (HuggingFace)
 
-> Recherche et téléchargement de modèles depuis HuggingFace.
-> L'activité en cours (progress, queue, history) est sur le Dashboard.
+> Search and download MLX models from HuggingFace.
+> Download activity (progress, queue, history) is on the Dashboard.
 
 ---
 
 ## Layout
 
-Page en sections empilées verticalement.
+Full page: search bar + filters + results list.
 
-## Sections
+## Header
 
-### Downloading
-- Modèles en cours de téléchargement depuis HuggingFace
-- Progress bar jaune (#ffde00) avec GB/total, %, vitesse MB/s, fichiers restants
-- Bouton Stop
-- État "DISTRIBUTING" (indigo) quand rsync en cours vers les autres nodes
-  - Progress bar par node cible
+- Title: "Downloads"
+- Subtitle: "Search and download models on HuggingFace"
+- Link: ↗ huggingface.com (external)
 
-### Queued
-- Modèles en attente (queue max 3 slots)
-- Position dans la queue (#1, #2...)
-- Bouton Cancel
+## Search
 
-### History
-- ✓ Done : modèle downloadé + distribué, avec timestamp
-- ⚠ Stopped : avec taille partielle, bouton Restart
-- ✕ Error : avec message, bouton Restart
-- 🗑 pour supprimer de la liste
+- **Search field** — text input with Search button
+- **Direct download** — paste HuggingFace repo ID (e.g. `mlx-community/ModelName`) + ↓ button
 
-## Badge slots
-- "2/3 slots" dans le header, jaune quand actif
+## Filters
+
+All on one row:
+
+### Format
+- Fixed **MLX** badge (exo only uses MLX, no safetensors/gguf option)
+
+### Quant (dynamic dropdown)
+- Populated from search results (e.g. 4-bit, 8-bit, bf16)
+- Cross-filters with Parameters: selecting 8-bit hides parameters not available in 8-bit
+- Empty = All
+
+### Parameters (dynamic dropdown)
+- Populated from search results (e.g. 1B, 8B, 70B, 397B)
+- Cross-filters with Quant: selecting 70B hides quants not available for 70B
+- Empty = All
+
+### Sort
+- Dropdown: Popularity (default), Date, Likes, Size
+- Direction toggle: ↓ (desc) / ↑ (asc)
+
+### Apply
+- Button triggers new search with filters baked into HF API query
+
+## Results
+
+Each result card:
+- Model name (bold)
+- **MLX** badge (amber, always)
+- Quant badge (gray) — e.g. "8-bit"
+- Precision badge (gray) — e.g. "bf16"
+- Parameters badge (gray) — e.g. "397B"
+- **↗ HF link** — opens model page on huggingface.co
+- Author (mono, muted)
+- Estimated size (mono) — e.g. "~369.7 GB"
+- Download count — e.g. "↓ 62.2K"
+- **Download** button (yellow)
+
+## Download behavior
+- Click Download → model added to download queue
+- Max 3 concurrent downloads
+- Progress visible on Dashboard page
+- Queue auto-starts when slot frees up

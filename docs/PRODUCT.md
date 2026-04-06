@@ -1,7 +1,7 @@
 # ExoScopy — Product Description
 ## Complete UX/UI Reference Document
 
-> Version 1.1 — 2026-04-04
+> Version 1.2 — 2026-04-06
 > For UX/UI design work (Paper)
 
 ---
@@ -58,7 +58,7 @@ Persistent top or side navigation bar with page routing:
 ```
 [ExoScopy logo] [v1.0.0]                    [cluster status badge]
 
-[Dashboard]  [Chat]  [Models]  [Downloads]  [Settings]
+[Chat]  [Dashboard]  [Downloads]  [Settings]
 ```
 
 Each nav item leads to a full-page view. Active page highlighted.
@@ -67,11 +67,10 @@ Each nav item leads to a full-page view. Active page highlighted.
 
 | Page | Purpose |
 |------|---------|
-| **Dashboard** | Cluster overview — Space View, node status, active model |
-| **Chat** | Chat with models via exo API |
-| **Models** | Models installed per node, sync between nodes, HF search & download |
-| **Downloads** | Active downloads, queue, distribution progress |
-| **Settings** | Node config, SSH, endpoints, setup wizard |
+| **Chat** | Chat with models via exo API (default page) |
+| **Dashboard** | Model matrix, load/unload, sync, delete, activity, cluster nodes |
+| **Downloads** | Search and download MLX models from HuggingFace |
+| **Settings** | Node config, SSH key setup, endpoints |
 
 ---
 

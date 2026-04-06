@@ -83,9 +83,12 @@ Current version in `server/settings.js` → `DEFAULTS.version`
 UI fetches version from `/api/settings`.
 
 ## Development Status
-- Version courante : **v1.0.0**
-- UX/UI : en cours avec Paper (see docs/PRODUCT.md for complete spec)
-- Backend : adapté depuis Model Manager v3.8.014
+- Version courante : **v1.0.0** (deployed on rpi-dev:3456)
+- UX/UI : designed in Paper, implemented in React SPA
+- Backend : adapted from Model Manager, HTTP-first (no SSH for exo API)
+- Distribution : Docker on GHCR (`ghcr.io/sofille65/exoscopy:latest`)
+- Nav : **Chat | Dashboard | Downloads | Settings** (4 tabs)
+- GitHub : https://github.com/Sofille65/exoscopy
 
 ## v1 Scope
 

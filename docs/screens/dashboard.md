@@ -1,64 +1,70 @@
-# ExoScopy — Dashboard Screen
+# ExoScopy — Dashboard Screen (merged Dashboard + Models)
 
-> Vue opérationnelle : activité fichiers + status cluster.
+> Control panel: model management, cluster status, activity monitor.
+> Replaces the separate Dashboard and Models pages.
 
 ---
 
 ## Layout
 
-Deux colonnes : Activity (gauche, flex) + Cluster Nodes (droite, 320px).
+Two columns: left (status bar + matrix + activity) + right (cluster nodes, 280px).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Nav bar                                                            │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Dashboard              [⚡ Qwen3.5-397B-9bit · Pipeline · RDMA]   │
+│ ● Running  Qwen3.5-397B  Pipeline·RDMA  [Select▾] [Pipe|Tens] [Un]│
 ├──────────────────────────────────────────┬──────────────────────────┤
-│  DOWNLOADING                             │ CLUSTER NODES            │
-│  [download card with progress]           │ [● ultra-512   .29]      │
-│                                          │ [RAM bar + GPU/temp/W]   │
-│  DISTRIBUTING                            │                          │
-│  [rsync card with per-node progress]     │ [● ultra-256a  .30]      │
-│                                          │ [RAM bar + GPU/temp/W]   │
-│  QUEUED                                  │                          │
-│  [#1 model name]                         │ [● ultra-256b  .31]      │
-│                                          │ [RAM bar + GPU/temp/W]   │
-│  HISTORY                                 │                          │
-│  [✓ done] [⚠ stopped]                   │ [● ultra-256c  offline]  │
-└──────────────────────────────────────────┴──────────────────────────┘
+│  MODEL        │ 512    │ 256a   │ 256b  │ CLUSTER                  │
+│  ⚡Qwen3.5    │ ✓415GB │ ✓415GB │ ✓415GB│ ● ultra-512       .29    │
+│   GLM-5       │ ✓      │ ✓      │ ✓     │ RAM 14.5/512GB           │
+│   DeepSeek    │ ✓      │ —      │ —  Syn│ GPU 7% 38°C 36W  725GB  │
+│                                         │                          │
+│  ACTIVITY                               │ ● ultra-256a       .30   │
+│  [download progress bar]                │ RAM 11.5/256GB           │
+│  [rsync progress]                       │ GPU 25% 37°C 25W  725GB │
+│  [history]                              │                          │
+└─────────────────────────────────────────┴──────────────────────────┘
 ```
 
-## Active Model Strip
+## Status Bar (top)
 
-En haut à droite, cartouche jaune : modèle actif + Pipeline/Tensor + RDMA + node count.
+Green bar showing:
+- Running/Loading/No model status with dot indicator
+- Model name (mono)
+- Pipeline · RDMA info
+- **Model dropdown** (min-width 280px) — installed models, ⚡ on active
+- **Pipeline/Tensor** toggle
+- **Unload** button (red, only when running)
+- **Load** button (yellow)
 
-## Activity (colonne gauche)
+## Model Matrix
 
-### Downloading
-- Modèles en cours de download HF
-- Progress bar jaune, GB/total, %, vitesse, bouton Stop
+Table models × nodes:
+- Header: node name + disk free per node
+- Rows sorted by size descending
+- ✓ + size when installed, — when absent
+- ⚡ + amber background on active model
+- Trash icon (SVG) under each ✓ — click turns red for selection
+- **Sync** button on rows where model is missing on some nodes
+- **Delete bar** appears when trash icons selected: count + Cancel + Delete
 
-### Distributing
-- rsync en cours entre nodes
-- Badge "RSYNC" indigo
-- Progress bar par node cible (indigo)
+## Activity
 
-### Queued
-- Position dans la queue + nom + taille estimée
-- Bouton Cancel
+Below matrix, shows when active:
+- **Downloads** — HF download progress (yellow bar, GB/total, %, speed, Stop)
+- **Syncs** — rsync progress per target node (indigo bars, RSYNC badge)
+- **Queue** — position #N, Cancel
+- **History** — ✓ done / ⚠ stopped, Restart, trash
 
-### History
-- ✓ Done, ⚠ Stopped (avec Restart), timestamp
-- 🗑 pour supprimer
+## Cluster Nodes (right column)
 
-## Cluster Nodes (colonne droite)
-
-Cards empilées par node :
-- Dot status (vert/rouge) + nom + IP
-- RAM bar + used/total GB (%)
-- GPU% · temp° · watts · model count
-- Node offline : opacity réduite, "Offline" en rouge
-
-## Widget flottant
-
-Le cluster widget (artboard séparé) reste disponible en overlay depuis n'importe quel écran via le badge "3/4 online" dans la nav.
+Cards stacked vertically:
+- Dot status (green/red) + name + IP
+- RAM bar (used/total GB)
+- GPU% · temp° · watts
+- **SSD free badge** (hard drive icon, aligned right) with color-coded border:
+  - Green: <75% used
+  - Orange: 75-90% used
+  - Red: >90% used
+- Offline node: red border, opacity 0.6, "Offline" text
