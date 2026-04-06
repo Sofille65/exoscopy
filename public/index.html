@@ -981,11 +981,9 @@
               <span className="text-[22px] font-bold text-gray-900">Models</span>
               <span className="text-[13px] text-gray-400">{models.length} models across {nodeNames.length} nodes</span>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => {/* TODO */}}
-                className="px-4 py-2 bg-exo rounded-lg text-[13px] font-semibold text-gray-900 hover:brightness-95">+ Download</button>
-              <button onClick={() => setShowImport(true)} className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50">+ Add custom model</button>
-            </div>
+            <button onClick={() => setShowImport(true)} className="px-4 py-2 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 hover:bg-gray-50 flex items-center gap-1.5">
+              {Icons.download('#6b7280')} Add custom model
+            </button>
           </div>
 
           {/* Model matrix table */}
