@@ -1336,11 +1336,22 @@
         setQuantFilter(''); setParamsFilter('');
         try {
           const apiSort = sort === 'estimatedSizeGB' ? 'downloads' : sort;
-          const params = new URLSearchParams({ q: query, format: 'mlx', sort: apiSort, limit: '50' });
+          // Include params filter in search query for better API results
+          let searchQuery = query;
+          if (paramsFilter) searchQuery += ` ${paramsFilter}B`;
+          if (quantFilter) searchQuery += ` ${quantFilter}bit`;
+          const params = new URLSearchParams({ q: searchQuery, format: 'mlx', sort: apiSort, limit: '50' });
           const res = await fetch(`/api/hub/search?${params}`);
           const data = await res.json();
           setRawResults(data);
-          setResults(data);
+          // Apply client-side filters on results
+          let filtered = data;
+          if (quantFilter) filtered = filtered.filter(m => String(m.quantBits) === String(quantFilter) || (m.precision && m.precision.toLowerCase() === quantFilter.toLowerCase()));
+          if (paramsFilter) filtered = filtered.filter(m => String(m.namedParams) === String(paramsFilter));
+          if (sort === 'estimatedSizeGB') {
+            filtered.sort((a, b) => sortDir === 'desc' ? (b.estimatedSizeGB || 0) - (a.estimatedSizeGB || 0) : (a.estimatedSizeGB || 0) - (b.estimatedSizeGB || 0));
+          }
+          setResults(filtered);
         } catch (e) {
           console.error('HF search error:', e);
         }
@@ -1442,7 +1453,7 @@
                 {sortDir === 'desc' ? '↓' : '↑'}
               </button>
             </div>
-            <button onClick={applyFilters}
+            <button onClick={() => { search(); }}
               className="px-3 py-1 bg-exo rounded-md text-[11px] font-semibold text-gray-900 hover:brightness-95">Apply</button>
           </div>
 
