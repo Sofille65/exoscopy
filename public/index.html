@@ -898,6 +898,8 @@
       const [showImport, setShowImport] = useState(false);
       const [importForm, setImportForm] = useState({ sourceIp: '', sourceUser: '', sourcePath: '', targetNode: '' });
       const [activeSyncs, setActiveSyncs] = useState([]);
+      const [deleteSelection, setDeleteSelection] = useState(new Set()); // "modelId::nodeName"
+      const [deleting, setDeleting] = useState(false);
 
       function refreshMatrix() {
         fetch('/api/models/matrix').then(r => r.json()).then(d => {
@@ -1005,7 +1007,13 @@
                       return (
                         <div key={name} className="flex-1 text-center">
                           {m ? (
-                            <span className="text-emerald-500 text-sm">✓ <span className="mono text-[11px] text-gray-500">{formatBytes(m.sizeBytes)}</span></span>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-emerald-500 text-sm">✓ <span className="mono text-[11px] text-gray-500">{formatBytes(m.sizeBytes)}</span></span>
+                              <button onClick={() => {
+                                const key = `${model.id}::${name}`;
+                                setDeleteSelection(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+                              }} className={`text-[11px] transition-colors ${deleteSelection.has(`${model.id}::${name}`) ? 'text-red-500' : 'text-gray-300 hover:text-red-400'}`}>🗑</button>
+                            </div>
                           ) : (
                             <span className="mono text-[11px] text-gray-300">—</span>
                           )}
@@ -1028,6 +1036,35 @@
               })}
             </div>
           </div>
+          )}
+
+          {/* Delete bar */}
+          {deleteSelection.size > 0 && (
+            <div className="px-10 pb-4">
+              <div className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+                <span className="text-xs text-red-700 font-medium">{deleteSelection.size} selected for deletion</span>
+                <div className="flex-1" />
+                <button onClick={() => setDeleteSelection(new Set())}
+                  className="px-3 py-1 text-xs text-gray-500 border border-gray-200 rounded-md hover:bg-white">Cancel</button>
+                <button onClick={async () => {
+                  if (!confirm(`Delete ${deleteSelection.size} model(s) from nodes? This cannot be undone.`)) return;
+                  setDeleting(true);
+                  for (const key of deleteSelection) {
+                    const [modelId, nodeName] = key.split('::');
+                    await fetch('/api/models/delete', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ modelId, nodeName }),
+                    });
+                  }
+                  setDeleteSelection(new Set());
+                  setDeleting(false);
+                  refreshMatrix();
+                }} disabled={deleting}
+                  className="px-4 py-1 bg-red-500 text-white text-xs font-semibold rounded-md hover:bg-red-600 disabled:opacity-50">
+                  {deleting ? 'Deleting...' : `Delete ${deleteSelection.size} model(s)`}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Active syncs */}

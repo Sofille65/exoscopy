@@ -1508,6 +1508,30 @@ app.post('/api/models/sync', async (req, res) => {
   }
 });
 
+// POST /api/models/delete — delete a model from a specific node via SSH
+// body: { modelId, nodeName }
+app.post('/api/models/delete', async (req, res) => {
+  const { modelId, nodeName } = req.body;
+  if (!modelId || !nodeName) return res.status(400).json({ error: 'modelId and nodeName required' });
+
+  const settings = getSettings();
+  const node = settings.nodes.find(n => n.name === nodeName);
+  if (!node) return res.status(400).json({ error: `Node ${nodeName} not found` });
+
+  const sshUser = settings.sshUser || 'admin';
+  const modelDir = modelId.replace('/', '--');
+  const modelPath = `~/.exo/models/${modelDir}`;
+
+  console.log(`[delete] ${modelId} on ${nodeName} (${node.ip}): rm -rf ${modelPath}`);
+
+  const r = await sshExec(node.ip, `rm -rf ${modelPath} && echo DELETED`, 30000);
+  if (r.ok && r.stdout === 'DELETED') {
+    res.json({ ok: true, modelId, nodeName });
+  } else {
+    res.status(500).json({ ok: false, error: r.error || 'Delete failed' });
+  }
+});
+
 // GET /api/models/syncs — list active syncs
 app.get('/api/models/syncs', (req, res) => {
   res.json(Object.values(activeSyncs));
