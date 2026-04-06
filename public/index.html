@@ -893,24 +893,28 @@
       const [importForm, setImportForm] = useState({ sourceIp: '', sourceUser: '', sourcePath: '', targetNode: '' });
       const [activeSyncs, setActiveSyncs] = useState([]);
 
-      useEffect(() => {
+      function refreshMatrix() {
         fetch('/api/models/matrix').then(r => r.json()).then(d => {
           setMatrixData(d);
-          if (d.activeModel) {
+          if (d.activeModel && !loadModel) {
             setLoadModel(d.activeModel);
             setLoadStatus({ status: 'running', model: d.activeModel });
           }
         }).catch(() => {});
+      }
+      function refreshSyncs() {
         fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
+      }
+
+      useEffect(() => {
+        refreshMatrix();
+        refreshSyncs();
+        // Poll every 10s
+        const interval = setInterval(() => { refreshMatrix(); refreshSyncs(); }, 10000);
         // Listen for sync progress
-        const onSyncProgress = () => fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
-        socket.on('sync:progress', onSyncProgress);
-        socket.on('sync:complete', () => {
-          onSyncProgress();
-          // Refresh matrix after sync complete
-          setTimeout(() => fetch('/api/models/matrix').then(r => r.json()).then(setMatrixData).catch(() => {}), 2000);
-        });
-        return () => { socket.off('sync:progress', onSyncProgress); socket.off('sync:complete'); };
+        socket.on('sync:progress', refreshSyncs);
+        socket.on('sync:complete', () => { refreshSyncs(); refreshMatrix(); });
+        return () => { clearInterval(interval); socket.off('sync:progress', refreshSyncs); socket.off('sync:complete'); };
       }, []);
 
       const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
