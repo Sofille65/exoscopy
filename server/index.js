@@ -1393,8 +1393,32 @@ app.post('/api/ssh/setup-keys', async (req, res) => {
     }
   }
 
-  console.log('[ssh] Key setup results:', results.map(r => `${r.ip}: ${r.ok ? 'OK' : r.error}`).join(', '));
-  res.json({ results });
+  // Phase 2: Install inter-node keys (each node → every other node)
+  // For each node that we can now access via key, generate a key and copy it to all others
+  const interNodeResults = [];
+  for (const nodeA of nodes) {
+    for (const nodeB of nodes) {
+      if (nodeA.ip === nodeB.ip) continue;
+      const keyGenCmd = `ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes ${nodeA.user}@${nodeA.ip} 'test -f ~/.ssh/id_ed25519 || ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -q; cat ~/.ssh/id_ed25519.pub'`;
+      const pubKey = await new Promise(resolve => {
+        exec(keyGenCmd, { timeout: 10000, encoding: 'utf8' }, (err, stdout) => {
+          resolve(err ? null : stdout.trim());
+        });
+      });
+      if (!pubKey) { interNodeResults.push({ from: nodeA.ip, to: nodeB.ip, ok: false, error: 'Cannot read pubkey' }); continue; }
+
+      // Use sshpass to install A's key on B
+      const installCmd = `sshpass -p '${nodeB.password.replace(/'/g, "'\\''")}' ssh -o StrictHostKeyChecking=accept-new ${nodeB.user}@${nodeB.ip} "mkdir -p ~/.ssh && echo '${pubKey}' >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys"`;
+      const installR = await new Promise(resolve => {
+        exec(installCmd, { timeout: 10000, encoding: 'utf8' }, (err) => resolve({ ok: !err }));
+      });
+      interNodeResults.push({ from: nodeA.ip, to: nodeB.ip, ok: installR.ok });
+    }
+  }
+
+  console.log('[ssh] Container→node results:', results.map(r => `${r.ip}: ${r.ok ? 'OK' : r.error}`).join(', '));
+  console.log('[ssh] Inter-node results:', interNodeResults.map(r => `${r.from}→${r.to}: ${r.ok ? 'OK' : r.error || 'FAIL'}`).join(', '));
+  res.json({ results, interNodeResults });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1442,10 +1466,10 @@ app.post('/api/models/sync', async (req, res) => {
     activeSyncs[syncId].progress[targetName] = { status: 'syncing', percent: 0 };
     io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'syncing', percent: 0 });
 
-    // SSH into source node, then rsync from there to target
-    // (rsync can't do remote-to-remote, must run from one side)
-    const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sshUser}@${source.ip} "rsync -avz --progress ${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/"`;
-    console.log(`[sync] ${modelId}: ${source.ip} → ${target.ip} via: ${cmd}`);
+    // SSH into source node, rsync to target.
+    // Requires inter-node SSH keys (installed via Setup SSH Keys in Settings)
+    const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sshUser}@${source.ip} 'rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/'`;
+    console.log(`[sync] ${modelId}: ${source.ip} → ${target.ip}`);
 
     const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -1516,8 +1540,8 @@ app.post('/api/models/import', async (req, res) => {
   res.json({ importId, status: 'started' });
 
   // SSH into source machine, rsync from there to target node
-  const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sourceUser}@${sourceIp} "rsync -avz --progress ${sourcePath}/ ${sshUser}@${target.ip}:${targetPath}/"`;
-  console.log(`[import] ${sourcePath} → ${target.ip}:${targetPath} via: ${cmd}`);
+  const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sourceUser}@${sourceIp} 'rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${sourcePath}/ ${sshUser}@${target.ip}:${targetPath}/'`;
+  console.log(`[import] ${sourcePath} → ${target.ip}:${targetPath}`);
 
   const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
 
