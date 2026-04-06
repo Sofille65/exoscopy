@@ -477,7 +477,7 @@ app.get('/api/models/matrix', async (req, res) => {
                        || meta?.TensorShardMetadata?.modelCard?.modelId;
           const sizeBytes = meta?.PipelineShardMetadata?.modelCard?.storageSize?.inBytes
                          || meta?.TensorShardMetadata?.modelCard?.storageSize?.inBytes || 0;
-          if (modelId) nodeModels[name].push({ id: modelId, sizeGB: Math.round(sizeBytes / 1073741824) });
+          if (modelId) nodeModels[name].push({ id: modelId, sizeBytes: sizeBytes || 0 });
         }
       }
     }
@@ -486,12 +486,12 @@ app.get('/api/models/matrix', async (req, res) => {
     const allModels = new Map();
     for (const models of Object.values(nodeModels)) {
       for (const m of models) {
-        if (!allModels.has(m.id)) allModels.set(m.id, m.sizeGB);
+        if (!allModels.has(m.id)) allModels.set(m.id, m.sizeBytes);
       }
     }
     const modelList = [...allModels.entries()]
-      .map(([id, sizeGB]) => ({ id, sizeGB }))
-      .sort((a, b) => b.sizeGB - a.sizeGB);
+      .map(([id, sizeBytes]) => ({ id, sizeBytes }))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
 
     // Get active model
     let activeModel = null;

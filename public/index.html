@@ -171,6 +171,12 @@
       }
     }
 
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '—';
+      if (bytes < 1073741824) return `${Math.round(bytes / 1048576)} MB`;
+      return `${Math.round(bytes / 1073741824)} GB`;
+    }
+
     function formatGB(sizeKb) {
       if (!sizeKb) return '—';
       return `${(sizeKb / 1048576).toFixed(0)} GB`;
@@ -992,14 +998,14 @@
                         {isActive && <span className="text-[11px]">⚡</span>}
                         <span className={`text-[13px] font-medium text-gray-900 ${isActive ? 'font-semibold' : ''}`}>{model.id.split('/').pop()}</span>
                       </div>
-                      <span className="mono text-[11px] text-gray-400">{model.id.split('/')[0]} · {model.sizeGB} GB</span>
+                      <span className="mono text-[11px] text-gray-400">{model.id.split('/')[0]} · {formatBytes(model.sizeBytes)}</span>
                     </div>
                     {nodeNames.map(name => {
                       const m = modelOnNode(model.id, name);
                       return (
                         <div key={name} className="flex-1 text-center">
                           {m ? (
-                            <span className="text-emerald-500 text-sm">✓ <span className="mono text-[11px] text-gray-500">{m.sizeGB} GB</span></span>
+                            <span className="text-emerald-500 text-sm">✓ <span className="mono text-[11px] text-gray-500">{formatBytes(m.sizeBytes)}</span></span>
                           ) : (
                             <span className="mono text-[11px] text-gray-300">—</span>
                           )}
