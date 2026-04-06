@@ -198,7 +198,103 @@
     // NAV BAR
     // ═══════════════════════════════════════════════════════════════════
 
-    function NavBar({ page, setPage, version, clusterStatus }) {
+    function HelpModal({ onClose }) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-[700px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl">
+              <span className="text-lg font-bold text-gray-900">ExoScopy — User Guide</span>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+            </div>
+            <div className="px-6 py-5 text-sm text-gray-700 flex flex-col gap-6">
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">What is ExoScopy?</h3>
+                <p className="leading-relaxed">ExoScopy is a web dashboard for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-500 underline">exo</a> — the open-source framework that turns Apple Silicon Macs into a distributed AI inference cluster. It gives you a clean interface to chat with your models, monitor your cluster, manage models across nodes, and download new ones from HuggingFace.</p>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Getting Started</h3>
+                <ol className="list-decimal ml-5 flex flex-col gap-1.5">
+                  <li>Go to <strong>Settings</strong> and add your EXO nodes (name + IP address)</li>
+                  <li>Click <strong>Re-discover</strong> to automatically find exo nodes on your network</li>
+                  <li>Set the <strong>EXO Endpoint</strong> (IP of your master node, port 52415)</li>
+                  <li>Click <strong>Test</strong> to verify connectivity</li>
+                  <li>For model sync between nodes: enter passwords and click <strong>Setup SSH Keys</strong></li>
+                </ol>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Chat</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li><strong>New chat</strong> — click "+ New chat" in the sidebar</li>
+                  <li><strong>Model selector</strong> — dropdown shows installed models (⚡ = currently loaded)</li>
+                  <li><strong>Presets</strong> — Creative (temp 1.2), Normal (temp 0.7), Code (temp 0.2)</li>
+                  <li><strong>Inference Settings</strong> — full parameter control (temperature, top_p, top_k, min_p, repetition penalty, seed, thinking mode)</li>
+                  <li><strong>System Prompt</strong> — toggle ON/OFF, save multiple prompts in the dropdown</li>
+                  <li><strong>Stats</strong> — TTFT, speed (tk/s), tokens, generation time shown after each response</li>
+                  <li><strong>Copy / Save</strong> — hover over a response to copy markdown or save as .md file</li>
+                  <li><strong>Code blocks</strong> — save individual files or all as .zip</li>
+                  <li><strong>Export</strong> — hover a conversation in sidebar → ↓ MD or ↓ JSON</li>
+                  <li><strong>Keyboard</strong> — Enter to send, Shift+Enter for new line</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Dashboard</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li><strong>Status bar</strong> — shows running model, select + load/unload models, Pipeline/Tensor sharding</li>
+                  <li><strong>Model matrix</strong> — models × nodes. ✓ = installed, — = missing</li>
+                  <li><strong>Sync</strong> — click "Sync" to rsync a model from one node to others via SSH</li>
+                  <li><strong>Delete</strong> — click trash icons to select, then "Delete" to remove from nodes</li>
+                  <li><strong>Activity</strong> — active downloads, sync progress, queue, history</li>
+                  <li><strong>Cluster nodes</strong> — RAM usage, GPU%, temperature, watts, SSD free space per node</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Downloads</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li><strong>Search</strong> — search HuggingFace for MLX models</li>
+                  <li><strong>Filters</strong> — Quant (4-bit, 8-bit...) and Parameters (8B, 70B...) filter each other dynamically</li>
+                  <li><strong>Sort</strong> — by Popularity, Date, Likes, or Size (↑↓ direction)</li>
+                  <li><strong>Direct download</strong> — paste a HuggingFace repo ID (e.g. mlx-community/ModelName) and click ↓</li>
+                  <li><strong>Download queue</strong> — max 3 concurrent downloads, others are queued automatically</li>
+                  <li><strong>HF link</strong> — click the ↗ icon on any result to view on HuggingFace</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Settings</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li><strong>Nodes</strong> — add/remove EXO cluster nodes</li>
+                  <li><strong>Re-discover</strong> — scan your LAN for exo nodes (port 52415)</li>
+                  <li><strong>SSH Keys</strong> — enter passwords per node, click "Setup SSH Keys" to install keys for sync</li>
+                  <li><strong>Test SSH</strong> — verify key-based SSH connectivity to each node</li>
+                  <li><strong>EXO Endpoint</strong> — IP and port of your exo master node</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">Tips</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li>exo's native dashboard is available via the <strong>↗ exo Dashboard</strong> link in the nav bar</li>
+                  <li>Thinking mode (Qwen3.5) is OFF by default — enable in Inference Settings if needed</li>
+                  <li>Models must be installed on ALL nodes to be loaded on the cluster — use Sync to distribute</li>
+                  <li>The download queue supports max 3 concurrent downloads from HuggingFace</li>
+                </ul>
+              </div>
+
+              <div className="text-xs text-gray-400 border-t border-gray-100 pt-4">
+                ExoScopy v1.0.0 — <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-indigo-400 underline">GitHub</a> · Built for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-400 underline">exo</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp }) {
       const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
@@ -226,6 +322,10 @@
                 <span className="text-xs text-gray-500 font-medium">{onlineCount}/{totalCount} online</span>
               </div>
             )}
+            <button onClick={() => setShowHelp(true)}
+              className="flex items-center gap-1 px-2 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </button>
             <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
               className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
               <span className="text-[11px]">↗</span>
@@ -1787,6 +1887,7 @@
       const [page, setPage] = useState('Chat');
       const [settings, setSettings] = useState(null);
       const [clusterStatus, setClusterStatus] = useState(null);
+      const [showHelp, setShowHelp] = useState(false);
 
       function refreshSettings() {
         fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => {});
@@ -1805,7 +1906,8 @@
 
       return (
         <div className="h-screen flex flex-col">
-          <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus} />
+          <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus} showHelp={showHelp} setShowHelp={setShowHelp} />
+          {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
           {page === 'Chat' && <ChatPage clusterStatus={clusterStatus} />}
           {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
           {page === 'Downloads' && <DownloadsPage />}
