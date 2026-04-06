@@ -477,7 +477,9 @@ app.get('/api/models/matrix', async (req, res) => {
                        || meta?.TensorShardMetadata?.modelCard?.modelId;
           const sizeBytes = meta?.PipelineShardMetadata?.modelCard?.storageSize?.inBytes
                          || meta?.TensorShardMetadata?.modelCard?.storageSize?.inBytes || 0;
-          if (modelId) nodeModels[name].push({ id: modelId, sizeBytes: sizeBytes || 0 });
+          if (modelId && !deletedModels.has(`${modelId}::${name}`)) {
+            nodeModels[name].push({ id: modelId, sizeBytes: sizeBytes || 0 });
+          }
         }
       }
     }
@@ -1078,7 +1080,10 @@ app.get('/api/chat/models', async (req, res) => {
       }
     }
 
-    const models = [...completedModels].sort().map(id => ({ id, name: id }));
+    // Filter out models deleted from all nodes
+    const models = [...completedModels]
+      .filter(id => ![...deletedModels].some(d => d.startsWith(`${id}::`)))
+      .sort().map(id => ({ id, name: id }));
     res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
@@ -1428,6 +1433,9 @@ app.post('/api/ssh/setup-keys', async (req, res) => {
 // Active syncs tracking
 const activeSyncs = {};
 
+// Deleted models tracking (exo /state keeps DownloadCompleted even after rm)
+const deletedModels = new Set(); // "modelId::nodeName"
+
 // POST /api/models/sync — rsync a model from source node to target nodes
 // body: { modelId, sourceNode, targetNodes: [name], modelPath? }
 app.post('/api/models/sync', async (req, res) => {
@@ -1526,6 +1534,7 @@ app.post('/api/models/delete', async (req, res) => {
 
   const r = await sshExec(node.ip, `rm -rf ${modelPath} && echo DELETED`, 30000);
   if (r.ok && r.stdout === 'DELETED') {
+    deletedModels.add(`${modelId}::${nodeName}`);
     res.json({ ok: true, modelId, nodeName });
   } else {
     res.status(500).json({ ok: false, error: r.error || 'Delete failed' });
