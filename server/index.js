@@ -941,6 +941,58 @@ app.delete('/api/catalog/:id(*)', (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM PROMPTS API — persisted in data/system-prompts.json
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROMPTS_PATH = path.join(__dirname, '..', 'data', 'system-prompts.json');
+
+function loadSystemPrompts() {
+  try {
+    if (fs.existsSync(PROMPTS_PATH)) return JSON.parse(fs.readFileSync(PROMPTS_PATH, 'utf8'));
+  } catch (e) { console.error('[prompts] Failed to load:', e.message); }
+  return [];
+}
+
+function saveSystemPrompts(prompts) {
+  const dir = path.dirname(PROMPTS_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(PROMPTS_PATH, JSON.stringify(prompts, null, 2), 'utf8');
+}
+
+// GET /api/system-prompts
+app.get('/api/system-prompts', (req, res) => {
+  res.json(loadSystemPrompts());
+});
+
+// PUT /api/system-prompts — replace all
+app.put('/api/system-prompts', (req, res) => {
+  const prompts = req.body;
+  if (!Array.isArray(prompts)) return res.status(400).json({ error: 'Must be an array' });
+  saveSystemPrompts(prompts);
+  res.json({ ok: true, count: prompts.length });
+});
+
+// POST /api/system-prompts — add one
+app.post('/api/system-prompts', (req, res) => {
+  const { name, content } = req.body;
+  if (!name || !content) return res.status(400).json({ error: 'name and content required' });
+  const prompts = loadSystemPrompts();
+  const existing = prompts.findIndex(p => p.name === name);
+  if (existing >= 0) prompts[existing].content = content;
+  else prompts.push({ name, content });
+  saveSystemPrompts(prompts);
+  res.json({ ok: true, prompt: { name, content } });
+});
+
+// DELETE /api/system-prompts/:name
+app.delete('/api/system-prompts/:name', (req, res) => {
+  const prompts = loadSystemPrompts();
+  const filtered = prompts.filter(p => p.name !== req.params.name);
+  saveSystemPrompts(filtered);
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CONVERSATIONS API
 // ─────────────────────────────────────────────────────────────────────────────
 
