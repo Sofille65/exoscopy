@@ -1391,7 +1391,9 @@
           const data = await r.json();
           const ok = data.results?.filter(r => r.ok)?.length || 0;
           const fail = data.results?.filter(r => !r.ok)?.length || 0;
-          setSetupResult(`Keys installed: ${ok} OK, ${fail} failed`);
+          const interOk = data.interNodeResults?.filter(r => r.ok)?.length || 0;
+          const interFail = data.interNodeResults?.filter(r => !r.ok)?.length || 0;
+          setSetupResult(`Container→nodes: ${ok} OK. Inter-node: ${interOk} OK${interFail ? `, ${interFail} failed` : ''}. Total: ${ok + interOk} keys`);
           // Clear passwords after setup
           setPasswords({});
           // Re-test
