@@ -1313,35 +1313,43 @@
       const [sort, setSort] = useState('downloads');
       const [sortDir, setSortDir] = useState('desc');
       const [quantFilter, setQuantFilter] = useState('');
+      const [paramsFilter, setParamsFilter] = useState('');
       const [directId, setDirectId] = useState('');
+      const [rawResults, setRawResults] = useState([]);
+      const [availableQuants, setAvailableQuants] = useState([]);
+      const [availableParams, setAvailableParams] = useState([]);
 
       async function search() {
         if (!query.trim()) return;
         setLoading(true);
+        setQuantFilter(''); setParamsFilter('');
         try {
           const apiSort = sort === 'estimatedSizeGB' ? 'downloads' : sort;
           const params = new URLSearchParams({ q: query, format: format === 'all' ? '' : format, sort: apiSort, limit: '50' });
           const res = await fetch(`/api/hub/search?${params}`);
-          let data = await res.json();
-          // Client-side quant filter
-          if (quantFilter.trim()) {
-            const qf = quantFilter.trim().toLowerCase();
-            data = data.filter(m => {
-              if (m.quantBits && String(m.quantBits).includes(qf)) return true;
-              if (m.precision && m.precision.toLowerCase().includes(qf)) return true;
-              if (m.id.toLowerCase().includes(qf + 'bit') || m.id.toLowerCase().includes(qf + '-bit')) return true;
-              return false;
-            });
-          }
-          // Client-side sort by size if selected
-          if (sort === 'estimatedSizeGB') {
-            data.sort((a, b) => sortDir === 'desc' ? (b.estimatedSizeGB || 0) - (a.estimatedSizeGB || 0) : (a.estimatedSizeGB || 0) - (b.estimatedSizeGB || 0));
-          }
-          setResults(data);
+          const data = await res.json();
+          setRawResults(data);
+          // Extract available quants and params for filter dropdowns
+          const quants = [...new Set(data.map(m => m.quantBits).filter(Boolean))].sort((a, b) => a - b);
+          const parms = [...new Set(data.map(m => m.namedParams).filter(Boolean))].sort((a, b) => a - b);
+          setAvailableQuants(quants);
+          setAvailableParams(parms);
+          applyFilters(data, '', '');
         } catch (e) {
           console.error('HF search error:', e);
         }
         setLoading(false);
+      }
+
+      function applyFilters(data, qf, pf) {
+        let filtered = data || rawResults;
+        if (qf) filtered = filtered.filter(m => String(m.quantBits) === String(qf) || (m.precision && m.precision.toLowerCase() === qf.toLowerCase()));
+        if (pf) filtered = filtered.filter(m => String(m.namedParams) === String(pf));
+        // Sort
+        if (sort === 'estimatedSizeGB') {
+          filtered.sort((a, b) => sortDir === 'desc' ? (b.estimatedSizeGB || 0) - (a.estimatedSizeGB || 0) : (a.estimatedSizeGB || 0) - (b.estimatedSizeGB || 0));
+        }
+        setResults(filtered);
       }
 
       async function downloadModel(modelId) {
@@ -1405,8 +1413,20 @@
             <div className="w-px h-6 bg-gray-200" />
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Quant</span>
-              <input type="text" value={quantFilter} onChange={e => setQuantFilter(e.target.value)}
-                placeholder="e.g. 8, 4, bf16" className="mono text-[11px] px-2 py-1 border border-gray-200 rounded-md bg-white w-[100px] placeholder-gray-300" />
+              <select value={quantFilter} onChange={e => setQuantFilter(e.target.value)}
+                className="mono text-[11px] px-2 py-1 border border-gray-200 rounded-md bg-white min-w-[80px]">
+                <option value="">All</option>
+                {availableQuants.map(q => <option key={q} value={q}>{q}-bit</option>)}
+              </select>
+            </div>
+            <div className="w-px h-6 bg-gray-200" />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Parameters</span>
+              <select value={paramsFilter} onChange={e => setParamsFilter(e.target.value)}
+                className="mono text-[11px] px-2 py-1 border border-gray-200 rounded-md bg-white min-w-[80px]">
+                <option value="">All</option>
+                {availableParams.map(p => <option key={p} value={p}>{p}B</option>)}
+              </select>
             </div>
             <div className="w-px h-6 bg-gray-200" />
             <div className="flex items-center gap-2">
@@ -1422,6 +1442,8 @@
                 {sortDir === 'desc' ? '↓' : '↑'}
               </button>
             </div>
+            <button onClick={() => applyFilters(null, quantFilter, paramsFilter)}
+              className="px-3 py-1 bg-exo rounded-md text-[11px] font-semibold text-gray-900 hover:brightness-95">Apply</button>
           </div>
 
           {/* Results */}

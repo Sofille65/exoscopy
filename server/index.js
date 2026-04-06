@@ -1249,7 +1249,7 @@ app.get('/api/hub/search', async (req, res) => {
 
       // Detect format
       let detectedFormat = 'safetensors';
-      if (tags.includes('mlx'))  detectedFormat = 'mlx';
+      if (tags.includes('mlx') || m.library_name === 'mlx' || (m.id || '').toLowerCase().includes('-mlx'))  detectedFormat = 'mlx';
       else if (tags.includes('gguf')) detectedFormat = 'gguf';
 
       // Detect quantization (config > tag > name)
