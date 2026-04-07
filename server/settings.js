@@ -5,7 +5,7 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || path.join(__dirname, '..', 'd
 
 // ─── Defaults — no hardcoded IPs, EXO only ───────────────────
 const DEFAULTS = {
-  version: '1.1.0',
+  version: '1.2.0',
 
   // EXO nodes — empty by default, populated via discovery or Settings
   nodes: [],
