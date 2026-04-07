@@ -231,12 +231,16 @@
                   <li><strong>Model selector</strong> — dropdown shows installed models (⚡ = currently loaded)</li>
                   <li><strong>Presets</strong> — Creative (temp 1.2), Normal (temp 0.7), Code (temp 0.2)</li>
                   <li><strong>Inference Settings</strong> — full parameter control (temperature, top_p, top_k, min_p, repetition penalty, seed, thinking mode)</li>
-                  <li><strong>System Prompt</strong> — toggle ON/OFF, save multiple prompts in the dropdown</li>
-                  <li><strong>Stats</strong> — TTFT, speed (tk/s), tokens, generation time shown after each response</li>
+                  <li><strong>System Prompt</strong> — toggle ON/OFF, save multiple prompts, export/import as JSON</li>
+                  <li><strong>File attachments</strong> — 📎 button to attach .py, .js, .md, .json and more — injected as code blocks</li>
+                  <li><strong>Multi-turn editing</strong> — hover a user message → pencil icon → edit and regenerate from that point</li>
+                  <li><strong>Thinking mode</strong> — enable in Inference Settings, thinking blocks shown in real-time during streaming</li>
+                  <li><strong>Stats</strong> — TTFT, speed (tk/s), tokens, generation time, chunks shown after each response with Copy button</li>
                   <li><strong>Copy / Save</strong> — hover over a response to copy markdown or save as .md file</li>
                   <li><strong>Code blocks</strong> — save individual files or all as .zip</li>
+                  <li><strong>Pin conversations</strong> — hover a conversation → Pin/Unpin (pinned stay on top)</li>
                   <li><strong>Export</strong> — hover a conversation in sidebar → ↓ MD or ↓ JSON</li>
-                  <li><strong>Keyboard</strong> — Enter to send, Shift+Enter for new line</li>
+                  <li><strong>Keyboard</strong> — Enter to send, Shift+Enter for new line, Cmd+K / Ctrl+K for new chat</li>
                 </ul>
               </div>
 
@@ -255,11 +259,13 @@
               <div>
                 <h3 className="font-semibold text-gray-900 text-base mb-2">Downloads</h3>
                 <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li><strong>Search</strong> — search HuggingFace for MLX models</li>
-                  <li><strong>Filters</strong> — Quant (4-bit, 8-bit...) and Parameters (8B, 70B...) filter each other dynamically</li>
+                  <li><strong>Search</strong> — search HuggingFace for MLX models (exo qualified only)</li>
+                  <li><strong>Filters</strong> — Quant and Parameters dropdowns, dynamically cross-filtered from results</li>
                   <li><strong>Sort</strong> — by Popularity, Date, Likes, or Size (↑↓ direction)</li>
+                  <li><strong>Download mode</strong> — "Node 1 only" or "Distributed" (auto-rsync to all nodes after download)</li>
                   <li><strong>Direct download</strong> — paste a HuggingFace repo ID (e.g. mlx-community/ModelName) and click ↓</li>
-                  <li><strong>Download queue</strong> — max 3 concurrent downloads, others are queued automatically</li>
+                  <li><strong>Download queue</strong> — max 3 concurrent downloads, progress bar at bottom of page</li>
+                  <li><strong>Persistent search</strong> — results stay when switching pages, "Clear results" to reset</li>
                   <li><strong>HF link</strong> — click the ↗ icon on any result to view on HuggingFace</li>
                 </ul>
               </div>
@@ -269,8 +275,8 @@
                 <ul className="list-disc ml-5 flex flex-col gap-1">
                   <li><strong>Nodes</strong> — add/remove EXO cluster nodes</li>
                   <li><strong>Re-discover</strong> — scan your LAN for exo nodes (port 52415)</li>
-                  <li><strong>SSH Keys</strong> — enter passwords per node, click "Setup SSH Keys" to install keys for sync</li>
-                  <li><strong>Test SSH</strong> — verify key-based SSH connectivity to each node</li>
+                  <li><strong>SSH Keys</strong> — enter passwords per node, click "Setup SSH Keys" to install keys (container + inter-node)</li>
+                  <li><strong>Config Check</strong> — verify SSH, exo API, Python, huggingface_hub, rsync, model path, disk free per node</li>
                   <li><strong>EXO Endpoint</strong> — IP and port of your exo master node</li>
                 </ul>
               </div>
@@ -286,7 +292,7 @@
               </div>
 
               <div className="text-xs text-gray-400 border-t border-gray-100 pt-4">
-                ExoScopy v1.0.0 — <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-indigo-400 underline">GitHub</a> · Built for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-400 underline">exo</a>
+                ExoScopy v1.2.0 — <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-indigo-400 underline">GitHub</a> · Built for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-400 underline">exo</a>
               </div>
             </div>
           </div>

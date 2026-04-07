@@ -83,7 +83,7 @@ Current version in `server/settings.js` → `DEFAULTS.version`
 UI fetches version from `/api/settings`.
 
 ## Development Status
-- Version courante : **v1.0.0** (deployed on rpi-dev:3456)
+- Version courante : **v1.2.0** (deployed on rpi-dev:3456)
 - UX/UI : designed in Paper, implemented in React SPA
 - Backend : adapted from Model Manager, HTTP-first (no SSH for exo API)
 - Distribution : Docker on GHCR (`ghcr.io/sofille65/exoscopy:latest`)
