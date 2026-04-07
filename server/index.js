@@ -1546,7 +1546,19 @@ app.post('/api/ssh/setup-keys', async (req, res) => {
 const activeSyncs = {};
 
 // Deleted models tracking (exo /state keeps DownloadCompleted even after rm)
-const deletedModels = new Set(); // "modelId::nodeName"
+// Persist deleted models across restarts
+const DELETED_MODELS_PATH = path.join(__dirname, '..', 'data', 'deleted-models.json');
+let deletedModels;
+try {
+  deletedModels = new Set(fs.existsSync(DELETED_MODELS_PATH) ? JSON.parse(fs.readFileSync(DELETED_MODELS_PATH, 'utf8')) : []);
+} catch (e) { deletedModels = new Set(); }
+function saveDeletedModels() {
+  try {
+    const dir = path.dirname(DELETED_MODELS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(DELETED_MODELS_PATH, JSON.stringify([...deletedModels], null, 2), 'utf8');
+  } catch (e) { console.error('[deletedModels] save error:', e.message); }
+}
 
 // POST /api/models/sync — rsync a model from source node to target nodes
 // body: { modelId, sourceNode, targetNodes: [name], modelPath? }
@@ -1647,6 +1659,7 @@ app.post('/api/models/delete', async (req, res) => {
   const r = await sshExec(node.ip, `rm -rf ${modelPath} && echo DELETED`, 30000);
   if (r.ok && r.stdout === 'DELETED') {
     deletedModels.add(`${modelId}::${nodeName}`);
+    saveDeletedModels();
     res.json({ ok: true, modelId, nodeName });
   } else {
     res.status(500).json({ ok: false, error: r.error || 'Delete failed' });
