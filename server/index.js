@@ -1305,6 +1305,29 @@ app.post('/api/chat/completions', async (req, res) => {
 // HUGGINGFACE HUB SEARCH
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Cache of exo-qualified model IDs (from /v1/models)
+let _exoModelIds = null;
+let _exoModelIdsTime = 0;
+const EXO_MODELS_TTL = 300000; // 5 min cache
+
+async function getExoModelIds() {
+  if (_exoModelIds && Date.now() - _exoModelIdsTime < EXO_MODELS_TTL) return _exoModelIds;
+  const settings = getSettings();
+  const firstNode = settings.nodes[0];
+  if (!firstNode) return new Set();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(`http://${firstNode.ip}:${settings.exoPort || 52415}/v1/models`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return _exoModelIds || new Set();
+    const data = await r.json();
+    _exoModelIds = new Set((data.data || []).map(m => m.id));
+    _exoModelIdsTime = Date.now();
+    return _exoModelIds;
+  } catch (e) { return _exoModelIds || new Set(); }
+}
+
 // GET /api/hub/search?q=&format=mlx&sort=downloads&limit=40&author=mlx-community
 app.get('/api/hub/search', async (req, res) => {
   try {
@@ -1398,7 +1421,10 @@ app.get('/api/hub/search', async (req, res) => {
       };
     });
 
-    res.json(results);
+    // Filter to exo-qualified models only
+    const exoIds = await getExoModelIds();
+    const qualified = exoIds.size > 0 ? results.filter(m => exoIds.has(m.id)) : results;
+    res.json(qualified);
   } catch (e) {
     console.error('[hub/search]', e.message);
     res.status(500).json({ error: e.message });
