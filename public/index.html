@@ -399,9 +399,15 @@
           if (activeData.activeModel) {
             setActiveModel(activeData.activeModel);
             setSelectedModel(activeData.activeModel);
-          } else if (modelList.length > 0) {
-            // No active model — default to first installed model
-            setSelectedModel(modelList[0].id);
+            localStorage.setItem('exoscopy-last-model', activeData.activeModel);
+          } else {
+            // No active model — try last used, then first installed
+            const lastModel = localStorage.getItem('exoscopy-last-model');
+            if (lastModel && modelList.find(m => m.id === lastModel)) {
+              setSelectedModel(lastModel);
+            } else if (modelList.length > 0) {
+              setSelectedModel(modelList[0].id);
+            }
           }
         }).catch(() => {});
       }, []);
@@ -705,7 +711,7 @@
             {/* Chat header */}
             <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-3">
-                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}
+                <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('exoscopy-last-model', e.target.value); }}
                   className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none">
                   {models.map(m => (
                     <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
