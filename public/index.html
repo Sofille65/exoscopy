@@ -390,9 +390,19 @@
       // Load conversations + models + active model
       useEffect(() => {
         fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
-        fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
-        fetch('/api/chat/active-model?engine=exo1').then(r => r.json()).then(d => {
-          if (d.activeModel) { setActiveModel(d.activeModel); setSelectedModel(d.activeModel); }
+        Promise.all([
+          fetch('/api/chat/models?engine=exo1').then(r => r.json()),
+          fetch('/api/chat/active-model?engine=exo1').then(r => r.json()),
+        ]).then(([modelsData, activeData]) => {
+          const modelList = modelsData.models || [];
+          setModels(modelList);
+          if (activeData.activeModel) {
+            setActiveModel(activeData.activeModel);
+            setSelectedModel(activeData.activeModel);
+          } else if (modelList.length > 0) {
+            // No active model — default to first installed model
+            setSelectedModel(modelList[0].id);
+          }
         }).catch(() => {});
       }, []);
 
