@@ -1479,10 +1479,16 @@ app.post('/api/config-check', async (req, res) => {
     checks.python = python.ok && python.stdout.includes('Python 3');
     checks.pythonVersion = python.ok ? python.stdout.trim() : null;
 
-    // 4. huggingface_hub installed
-    const hfHub = await sshExec(node.ip, 'python3 -c "import huggingface_hub; print(huggingface_hub.__version__)" 2>&1', 5000);
-    checks.huggingfaceHub = hfHub.ok && !hfHub.stdout.includes('Error') && !hfHub.stdout.includes('No module');
-    checks.hfHubVersion = checks.huggingfaceHub ? hfHub.stdout.trim() : null;
+    // 4. huggingface_hub installed (only required on first node — downloads happen there)
+    const isFirstNode = node.ip === nodes[0]?.ip;
+    if (isFirstNode) {
+      const hfHub = await sshExec(node.ip, 'python3 -c "import huggingface_hub; print(huggingface_hub.__version__)" 2>&1', 5000);
+      checks.huggingfaceHub = hfHub.ok && !hfHub.stdout.includes('Error') && !hfHub.stdout.includes('No module');
+      checks.hfHubVersion = checks.huggingfaceHub ? hfHub.stdout.trim() : null;
+    } else {
+      checks.huggingfaceHub = null; // not required
+      checks.hfHubVersion = null;
+    }
 
     // 5. rsync available
     const rsyncCheck = await sshExec(node.ip, 'which rsync && rsync --version | head -1', 5000);

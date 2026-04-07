@@ -2028,7 +2028,7 @@
                 {configCheck.nodes.map(node => {
                   const c = node.checks;
                   const Dot = ({ ok }) => <div className={`w-2 h-2 rounded-full flex-shrink-0 ${ok ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-gray-300'}`} />;
-                  const allOk = c.ssh && c.exoApi && c.python && c.huggingfaceHub && c.rsync && c.modelPath;
+                  const allOk = c.ssh && c.exoApi && c.python && (c.huggingfaceHub === null || c.huggingfaceHub) && c.rsync && c.modelPath;
                   return (
                     <div key={node.name} className="px-4 py-3 border-b border-gray-100">
                       <div className="flex items-center gap-2 mb-2">
@@ -2041,7 +2041,10 @@
                         <div className="flex items-center gap-1.5"><Dot ok={c.ssh} /><span className="text-[11px] text-gray-600">SSH</span></div>
                         <div className="flex items-center gap-1.5"><Dot ok={c.exoApi} /><span className="text-[11px] text-gray-600">exo API</span></div>
                         <div className="flex items-center gap-1.5"><Dot ok={c.python} /><span className="text-[11px] text-gray-600">Python3 {c.pythonVersion ? <span className="mono text-[9px] text-gray-400">{c.pythonVersion.replace('Python ','')}</span> : ''}</span></div>
-                        <div className="flex items-center gap-1.5"><Dot ok={c.huggingfaceHub} /><span className="text-[11px] text-gray-600">huggingface_hub {c.hfHubVersion ? <span className="mono text-[9px] text-gray-400">{c.hfHubVersion}</span> : ''}</span></div>
+                        <div className="flex items-center gap-1.5">
+                          {c.huggingfaceHub === null ? <div className="w-2 h-2 rounded-full bg-gray-200 flex-shrink-0" /> : <Dot ok={c.huggingfaceHub} />}
+                          <span className="text-[11px] text-gray-600">huggingface_hub {c.hfHubVersion ? <span className="mono text-[9px] text-gray-400">{c.hfHubVersion}</span> : c.huggingfaceHub === null ? <span className="text-[9px] text-gray-300">not required</span> : ''}</span>
+                        </div>
                         <div className="flex items-center gap-1.5"><Dot ok={c.rsync} /><span className="text-[11px] text-gray-600">rsync</span></div>
                         <div className="flex items-center gap-1.5"><Dot ok={c.modelPath} /><span className="text-[11px] text-gray-600">~/.exo/models/</span></div>
                         <div className="flex items-center gap-1.5"><Dot ok={!!c.diskFree} /><span className="text-[11px] text-gray-600">Disk {c.diskFree || '—'} free</span></div>
