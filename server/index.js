@@ -1432,6 +1432,86 @@ app.get('/api/hub/search', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CONFIG CHECK API — verify all dependencies per node
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post('/api/config-check', async (req, res) => {
+  const settings = getSettings();
+  const nodes = settings.nodes;
+  const sshUser = settings.sshUser || 'admin';
+  const exoPort = settings.exoPort || 52415;
+
+  if (!nodes.length) return res.json({ nodes: [] });
+
+  const results = await Promise.all(nodes.map(async (node) => {
+    const checks = {};
+
+    // 1. SSH connectivity (key-based)
+    const ssh = await new Promise(resolve => {
+      exec(`ssh -o ConnectTimeout=3 -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${sshUser}@${node.ip} 'echo OK'`,
+        { timeout: 5000, encoding: 'utf8' },
+        (err, stdout) => resolve({ ok: !err && stdout.trim() === 'OK' })
+      );
+    });
+    checks.ssh = ssh.ok;
+
+    // 2. exo API reachable
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      const r = await fetch(`http://${node.ip}:${exoPort}/v1/models`, { signal: controller.signal });
+      clearTimeout(timer);
+      checks.exoApi = r.ok;
+    } catch (e) { checks.exoApi = false; }
+
+    // If SSH fails, can't check the rest
+    if (!ssh.ok) {
+      checks.python = false;
+      checks.huggingfaceHub = false;
+      checks.rsync = false;
+      checks.modelPath = false;
+      checks.diskFree = null;
+      return { name: node.name, ip: node.ip, checks };
+    }
+
+    // 3. Python3 available
+    const python = await sshExec(node.ip, 'python3 --version 2>&1', 5000);
+    checks.python = python.ok && python.stdout.includes('Python 3');
+    checks.pythonVersion = python.ok ? python.stdout.trim() : null;
+
+    // 4. huggingface_hub installed
+    const hfHub = await sshExec(node.ip, 'python3 -c "import huggingface_hub; print(huggingface_hub.__version__)" 2>&1', 5000);
+    checks.huggingfaceHub = hfHub.ok && !hfHub.stdout.includes('Error') && !hfHub.stdout.includes('No module');
+    checks.hfHubVersion = checks.huggingfaceHub ? hfHub.stdout.trim() : null;
+
+    // 5. rsync available
+    const rsyncCheck = await sshExec(node.ip, 'which rsync && rsync --version | head -1', 5000);
+    checks.rsync = rsyncCheck.ok && rsyncCheck.stdout.includes('rsync');
+
+    // 6. Model path exists and writable
+    const modelPath = await sshExec(node.ip, 'test -d ~/.exo/models && test -w ~/.exo/models && echo OK || echo MISSING', 5000);
+    checks.modelPath = modelPath.ok && modelPath.stdout.includes('OK');
+
+    // 7. Disk free space
+    const disk = await sshExec(node.ip, 'df -h ~/.exo/models 2>/dev/null | tail -1 | awk \'{print $4}\'', 5000);
+    checks.diskFree = disk.ok ? disk.stdout.trim() : null;
+
+    // 8. SSH to other nodes (inter-node)
+    const otherNodes = nodes.filter(n => n.ip !== node.ip);
+    const interNode = {};
+    for (const other of otherNodes) {
+      const test = await sshExec(node.ip, `ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${sshUser}@${other.ip} 'echo OK' 2>&1`, 5000);
+      interNode[other.name] = test.ok && test.stdout.includes('OK');
+    }
+    checks.interNodeSSH = interNode;
+
+    return { name: node.name, ip: node.ip, checks };
+  }));
+
+  res.json({ nodes: results });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SSH KEY SETUP API
 // ─────────────────────────────────────────────────────────────────────────────
 
