@@ -683,7 +683,7 @@ function _startDownload(modelId, existingId) {
   const sshUser    = settings.sshUser || 'admin';
   const sourceIp   = firstNode.ip;
   const sshOpts    = settings.sshOpts;
-  const destPath   = '$HOME/.exo/models';
+  const destPath   = '~/.exo/models';
   const downloadId = existingId || `dl-${Date.now()}`;
 
   if (existingId && activeDownloads[existingId]) {
@@ -708,7 +708,7 @@ function _startDownload(modelId, existingId) {
 import threading, time, os, sys
 from huggingface_hub import snapshot_download, HfApi
 repo="${modelId}"
-dest="${localDir}"
+dest=os.path.expanduser("${localDir}")
 total_bytes=0
 try:
     api=HfApi()
