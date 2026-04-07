@@ -794,6 +794,31 @@ print("DONE",flush=True)
       dl.status   = 'done';
       dl.progress = null;
       io.emit('download:complete', { id: downloadId, modelId, status: 'done' });
+      // Auto-distribute to other nodes if requested
+      if (dl.distributed) {
+        const settings = getSettings();
+        const sourceNode = settings.nodes[0]?.name;
+        const targetNodes = settings.nodes.slice(1).map(n => n.name);
+        if (sourceNode && targetNodes.length > 0) {
+          console.log(`[download] Auto-distributing ${modelId} from ${sourceNode} to ${targetNodes.join(', ')}`);
+          dl.status = 'distributing';
+          io.emit('download:progress', { id: downloadId, modelId, status: 'distributing' });
+          // Trigger sync (reuse the sync logic)
+          const sshUser = settings.sshUser || 'admin';
+          const modelDir = modelId.replace('/', '--');
+          const modelPath = `~/.exo/models/${modelDir}`;
+          for (const targetName of targetNodes) {
+            const source = settings.nodes[0];
+            const target = settings.nodes.find(n => n.name === targetName);
+            if (!target) continue;
+            const cmd = `ssh -o StrictHostKeyChecking=accept-new ${sshUser}@${source.ip} 'rsync -avz --progress -e "ssh -o StrictHostKeyChecking=accept-new" ${modelPath}/ ${sshUser}@${target.ip}:${modelPath}/'`;
+            const syncChild = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+            syncChild.on('close', (syncCode) => {
+              console.log(`[download] Sync ${modelId} → ${targetName}: ${syncCode === 0 ? 'OK' : 'FAILED'}`);
+            });
+          }
+        }
+      }
     } else {
       dl.status = 'error';
       dl.error  = dl.error || `Exit code ${code}`;
@@ -807,14 +832,18 @@ print("DONE",flush=True)
 }
 
 // POST /api/download — enqueue/start a HuggingFace model download
-// body: { modelId: 'mlx-community/ModelName' }
+// body: { modelId: 'mlx-community/ModelName', distributed?: boolean }
 app.post('/api/download', (req, res) => {
-  const { modelId } = req.body;
+  const { modelId, distributed } = req.body;
   if (!modelId || !modelId.includes('/')) {
     return res.status(400).json({ error: 'modelId must be in format community/model-name' });
   }
   const downloadId = startDownload(modelId);
-  res.json({ downloadId, modelId, status: activeDownloads[downloadId]?.status || 'started' });
+  // Mark for auto-distribution after download completes
+  if (distributed && activeDownloads[downloadId]) {
+    activeDownloads[downloadId].distributed = true;
+  }
+  res.json({ downloadId, modelId, distributed: !!distributed, status: activeDownloads[downloadId]?.status || 'started' });
 });
 
 // GET /api/downloads — list all downloads (strip internal fields)
