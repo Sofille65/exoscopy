@@ -359,9 +359,12 @@
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
       const [savedPrompts, setSavedPrompts] = useState([]);
 
-      // Load saved prompts from server on mount
+      // Load saved prompts from localStorage (personal, not shared)
       useEffect(() => {
-        fetch('/api/system-prompts').then(r => r.json()).then(setSavedPrompts).catch(() => {});
+        try {
+          const saved = JSON.parse(localStorage.getItem('exoscopy-system-prompts') || '[]');
+          setSavedPrompts(saved);
+        } catch (e) {}
       }, []);
       const [selectedPromptIdx, setSelectedPromptIdx] = useState(-1);
       const statsMapRef = useRef({}); // convId-msgIdx → stats
@@ -774,10 +777,9 @@
                       if (!systemPrompt.trim()) return;
                       const name = prompt('Prompt name:');
                       if (!name) return;
-                      fetch('/api/system-prompts', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name, content: systemPrompt }),
-                      }).then(() => fetch('/api/system-prompts').then(r => r.json()).then(setSavedPrompts));
+                      const updated = [...savedPrompts.filter(p => p.name !== name), { name, content: systemPrompt }];
+                      setSavedPrompts(updated);
+                      localStorage.setItem('exoscopy-system-prompts', JSON.stringify(updated));
                     }} className="px-3 py-2 bg-exo rounded-lg text-xs font-semibold text-gray-900 flex-shrink-0 hover:brightness-95">Save</button>
                   </div>
                 </div>
