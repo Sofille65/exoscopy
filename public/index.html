@@ -1421,26 +1421,26 @@
     // DOWNLOADS PAGE (HuggingFace Search)
     // ═══════════════════════════════════════════════════════════════════
 
-    // Persistent search state (survives page switches)
-    const _dlState = useRef({ query: '', results: [], rawResults: [], quantFilter: '', paramsFilter: '' });
+    // Persistent search state (survives page switches) — plain object, not a hook
+    const _dlState = { query: '', results: [], rawResults: [], quantFilter: '', paramsFilter: '' };
 
     function DownloadsPage() {
-      const [query, setQuery] = useState(_dlState.current.query);
-      const [results, setResults] = useState(_dlState.current.results);
+      const [query, setQuery] = useState(_dlState.query);
+      const [results, setResults] = useState(_dlState.results);
       const [loading, setLoading] = useState(false);
       const [format, setFormat] = useState('mlx');
       const [sort, setSort] = useState('downloads');
       const [sortDir, setSortDir] = useState('desc');
-      const [quantFilter, setQuantFilter] = useState(_dlState.current.quantFilter);
-      const [paramsFilter, setParamsFilter] = useState(_dlState.current.paramsFilter);
+      const [quantFilter, setQuantFilter] = useState(_dlState.quantFilter);
+      const [paramsFilter, setParamsFilter] = useState(_dlState.paramsFilter);
       const [directId, setDirectId] = useState('');
-      const [rawResults, setRawResults] = useState(_dlState.current.rawResults);
+      const [rawResults, setRawResults] = useState(_dlState.rawResults);
       const [downloadingIds, setDownloadingIds] = useState(new Set());
       const [distributed, setDistributed] = useState(true);
       const [activeDownloads, setActiveDownloads] = useState([]);
 
-      // Persist search state
-      useEffect(() => { _dlState.current = { query, results, rawResults, quantFilter, paramsFilter }; }, [query, results, rawResults, quantFilter, paramsFilter]);
+      // Persist search state to survive page switches
+      useEffect(() => { Object.assign(_dlState, { query, results, rawResults, quantFilter, paramsFilter }); }, [query, results, rawResults, quantFilter, paramsFilter]);
 
       // Poll active downloads
       useEffect(() => {
