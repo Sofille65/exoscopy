@@ -169,6 +169,10 @@ Browser → ExoScopy (:3456) → exo cluster (:52415)
 
 ---
 
+## Known Limitations
+
+- **Not multi-user** — all conversations are shared among users. ExoScopy is designed for single-user or trusted team use on a local network. Multi-user with authentication is planned for v1.3.
+
 ## License
 
 MIT
