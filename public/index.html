@@ -1421,19 +1421,36 @@
     // DOWNLOADS PAGE (HuggingFace Search)
     // ═══════════════════════════════════════════════════════════════════
 
+    // Persistent search state (survives page switches)
+    const _dlState = useRef({ query: '', results: [], rawResults: [], quantFilter: '', paramsFilter: '' });
+
     function DownloadsPage() {
-      const [query, setQuery] = useState('');
-      const [results, setResults] = useState([]);
+      const [query, setQuery] = useState(_dlState.current.query);
+      const [results, setResults] = useState(_dlState.current.results);
       const [loading, setLoading] = useState(false);
-      const [format, setFormat] = useState('mlx'); // always mlx for exo
+      const [format, setFormat] = useState('mlx');
       const [sort, setSort] = useState('downloads');
       const [sortDir, setSortDir] = useState('desc');
-      const [quantFilter, setQuantFilter] = useState('');
-      const [paramsFilter, setParamsFilter] = useState('');
+      const [quantFilter, setQuantFilter] = useState(_dlState.current.quantFilter);
+      const [paramsFilter, setParamsFilter] = useState(_dlState.current.paramsFilter);
       const [directId, setDirectId] = useState('');
-      const [rawResults, setRawResults] = useState([]);
+      const [rawResults, setRawResults] = useState(_dlState.current.rawResults);
       const [downloadingIds, setDownloadingIds] = useState(new Set());
       const [distributed, setDistributed] = useState(true);
+      const [activeDownloads, setActiveDownloads] = useState([]);
+
+      // Persist search state
+      useEffect(() => { _dlState.current = { query, results, rawResults, quantFilter, paramsFilter }; }, [query, results, rawResults, quantFilter, paramsFilter]);
+
+      // Poll active downloads
+      useEffect(() => {
+        const refresh = () => fetch('/api/downloads').then(r => r.json()).then(d => setActiveDownloads(d.filter(dl => dl.status === 'downloading' || dl.status === 'queued'))).catch(() => {});
+        refresh();
+        const interval = setInterval(refresh, 5000);
+        socket.on('download:progress', refresh);
+        socket.on('download:complete', refresh);
+        return () => { clearInterval(interval); socket.off('download:progress', refresh); socket.off('download:complete', refresh); };
+      }, []);
 
       // Compute available quants/params based on current cross-filter
       const availableQuants = useMemo(() => {
@@ -1534,6 +1551,22 @@
             </div>
           </div>
 
+          {/* Mode selector — right-aligned below Direct */}
+          <div className="px-10 pb-3 flex justify-end">
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-[#f9fafb] border border-gray-200 rounded-xl w-[360px]">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">DOWNLOAD MODE</span>
+              <div className="flex-1" />
+              <button onClick={() => setDistributed(false)}
+                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${!distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
+                Node 1 only
+              </button>
+              <button onClick={() => setDistributed(true)}
+                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
+                Distributed
+              </button>
+            </div>
+          </div>
+
           {/* Filters */}
           <div className="px-10 pb-4 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
@@ -1574,25 +1607,19 @@
             </div>
             <button onClick={() => { search(); }}
               className="px-3 py-1 bg-exo rounded-md text-[11px] font-semibold text-gray-900 hover:brightness-95">Apply</button>
-            <div className="w-px h-6 bg-gray-200" />
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Mode</span>
-              <button onClick={() => setDistributed(false)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium ${!distributed ? 'bg-exo font-semibold text-gray-900' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                Node 1 only
-              </button>
-              <button onClick={() => setDistributed(true)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium ${distributed ? 'bg-exo font-semibold text-gray-900' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                Distributed
-              </button>
-            </div>
           </div>
 
           {/* Results */}
           <div className="px-10 pb-4">
             {loading && <div className="text-center py-8 text-gray-400 text-sm">Searching...</div>}
             {!loading && results.length > 0 && (
-              <div className="text-xs text-gray-400 mb-2">{results.length} results</div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-xs text-gray-400">{results.length} results</span>
+                {results.length > 0 && (
+                  <button onClick={() => { setResults([]); setRawResults([]); setQuery(''); setQuantFilter(''); setParamsFilter(''); }}
+                    className="text-[10px] text-gray-400 hover:text-gray-600 border border-gray-200 px-2 py-0.5 rounded">Clear results</button>
+                )}
+              </div>
             )}
           </div>
           <div className="flex-1 px-10 pb-6 flex flex-col gap-2 overflow-y-auto">
@@ -1628,6 +1655,31 @@
               <div className="text-center py-12 text-gray-400 text-sm">Search HuggingFace to find models for your cluster.</div>
             )}
           </div>
+
+          {/* Active downloads mini progress */}
+          {activeDownloads.length > 0 && (
+            <div className="flex-shrink-0 border-t border-gray-200 bg-white px-10 py-3 flex flex-col gap-2">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Active downloads</span>
+              {activeDownloads.map(dl => {
+                const parts = (dl.progress || '').split(':');
+                const gb = parseFloat(parts[0]) || 0;
+                const total = parseFloat(parts[1]) || 0;
+                const speed = parseFloat(parts[3]) || 0;
+                const pct = total > 0 ? Math.round(gb / total * 100) : 0;
+                return (
+                  <div key={dl.id} className="flex items-center gap-3">
+                    <span className="text-[11px] font-medium text-gray-700 truncate max-w-[200px]">{dl.modelId?.split('/').pop()}</span>
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full">
+                      <div className="h-full bg-exo rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="mono text-[10px] text-gray-500 w-8 text-right">{pct}%</span>
+                    {speed > 0 && <span className="mono text-[10px] text-emerald-500 w-16">{speed} MB/s</span>}
+                    {dl.status === 'queued' && <span className="text-[10px] text-gray-400">queued</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }
