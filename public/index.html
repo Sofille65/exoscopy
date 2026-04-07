@@ -479,8 +479,15 @@
       }
 
       // Send message
+      const [chatWarning, setChatWarning] = useState(null);
+
       async function handleSend() {
         if ((!input.trim() && !attachedFiles.length) || streaming) return;
+        if (!selectedModel) {
+          setChatWarning('No model selected. Please select a model from the dropdown or load one from the Dashboard.');
+          setTimeout(() => setChatWarning(null), 5000);
+          return;
+        }
         let userMsg = input.trim();
         // Inject attached files as code blocks
         if (attachedFiles.length) {
@@ -925,6 +932,16 @@
                 <div ref={messagesEndRef} />
               </div>
             </div>
+
+            {/* Warning */}
+            {chatWarning && (
+              <div className="mx-6 mb-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 flex-shrink-0">
+                <span className="text-amber-500 text-sm">⚠</span>
+                <span className="text-xs text-amber-800">{chatWarning}</span>
+                <div className="flex-1" />
+                <button onClick={() => setChatWarning(null)} className="text-amber-400 hover:text-amber-600 text-sm">×</button>
+              </div>
+            )}
 
             {/* Input bar */}
             <div className="px-6 py-4 bg-white border-t border-gray-200 flex-shrink-0">
