@@ -678,10 +678,12 @@ function startDownload(modelId) {
  */
 function _startDownload(modelId, existingId) {
   const settings   = getSettings();
-  const destPath   = settings.source.paths.exo;
-  const sshUser    = settings.source.sshUser;
-  const sourceIp   = settings.source.ip;
+  const firstNode  = settings.nodes[0];
+  if (!firstNode) { console.error('[download] No nodes configured'); return existingId || `dl-err-${Date.now()}`; }
+  const sshUser    = settings.sshUser || 'admin';
+  const sourceIp   = firstNode.ip;
   const sshOpts    = settings.sshOpts;
+  const destPath   = '$HOME/.exo/models';
   const downloadId = existingId || `dl-${Date.now()}`;
 
   if (existingId && activeDownloads[existingId]) {
