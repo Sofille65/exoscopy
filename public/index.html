@@ -1551,23 +1551,7 @@
             </div>
           </div>
 
-          {/* Mode selector — right-aligned below Direct */}
-          <div className="px-10 pb-3 flex justify-end">
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-[#f9fafb] border border-gray-200 rounded-xl w-[360px]">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">DOWNLOAD MODE</span>
-              <div className="flex-1" />
-              <button onClick={() => setDistributed(false)}
-                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${!distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
-                Node 1 only
-              </button>
-              <button onClick={() => setDistributed(true)}
-                className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
-                Distributed
-              </button>
-            </div>
-          </div>
-
-          {/* Filters */}
+          {/* Filters + Download Mode — single row */}
           <div className="px-10 pb-4 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Format</span>
@@ -1607,6 +1591,18 @@
             </div>
             <button onClick={() => { search(); }}
               className="px-3 py-1 bg-exo rounded-md text-[11px] font-semibold text-gray-900 hover:brightness-95">Apply</button>
+            <div className="flex-1" />
+            <div className="flex items-center gap-3 px-3 py-1.5 bg-[#f9fafb] border border-gray-200 rounded-lg">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">DOWNLOAD MODE</span>
+              <button onClick={() => setDistributed(false)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${!distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
+                Node 1 only
+              </button>
+              <button onClick={() => setDistributed(true)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${distributed ? 'bg-indigo-50 text-indigo-600 font-semibold' : 'text-gray-500 hover:bg-gray-100'}`}>
+                Distributed
+              </button>
+            </div>
           </div>
 
           {/* Results */}
