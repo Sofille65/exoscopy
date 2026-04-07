@@ -781,9 +781,12 @@
                 <div className="border-t border-gray-100 pt-4">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">System Prompt</span>
-                    <button onClick={() => setSystemPromptEnabled(!systemPromptEnabled)} className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${systemPromptEnabled ? 'bg-exo justify-end' : 'bg-gray-200'}`}>
-                      <div className="w-4 h-4 bg-white rounded-full shadow-sm" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-gray-400">{systemPromptEnabled ? 'included' : 'not included'}</span>
+                      <button onClick={() => setSystemPromptEnabled(!systemPromptEnabled)} className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${systemPromptEnabled ? 'bg-exo justify-end' : 'bg-gray-200'}`}>
+                        <div className="w-4 h-4 bg-white rounded-full shadow-sm" />
+                      </button>
+                    </div>
                   </div>
                   <div className="flex gap-2 items-start">
                     <select value={selectedPromptIdx} onChange={e => {
