@@ -360,6 +360,8 @@
       const [preset, setPreset] = useState('normal');
       const [showSettings, setShowSettings] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
+      const [renamingId, setRenamingId] = useState(null);
+      const [renameValue, setRenameValue] = useState('');
       const [params, setParams] = useState({ temperature: 0.7, maxTokens: 32768, thinking: false, reasoningEffort: 'medium', topP: null, topK: null, minP: null, repPenalty: null, seed: null });
       const [systemPrompt, setSystemPrompt] = useState('');
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
@@ -638,10 +640,26 @@
                     activeConvId === c.id ? 'bg-gray-100 border-l-[3px] border-exo' : 'hover:bg-gray-50'
                   }`}>
                   <div className="flex justify-between items-center">
-                    <span className={`text-[13px] truncate max-w-[150px] ${activeConvId === c.id ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
-                      {c.pinned && <span className="text-[10px] text-gray-400 mr-1">📌</span>}
-                      {c.title || 'New conversation'}
-                    </span>
+                    {renamingId === c.id ? (
+                      <input type="text" value={renameValue} autoFocus
+                        onChange={e => setRenameValue(e.target.value)}
+                        onBlur={async () => {
+                          if (renameValue.trim()) {
+                            await fetch(`/api/conversations/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: renameValue.trim() }) });
+                            setConversations(prev => prev.map(x => x.id === c.id ? { ...x, title: renameValue.trim() } : x));
+                          }
+                          setRenamingId(null);
+                        }}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenamingId(null); }}
+                        onClick={e => e.stopPropagation()}
+                        className="text-[13px] font-medium text-gray-900 bg-white border border-exo rounded px-1 py-0 outline-none w-full" />
+                    ) : (
+                      <span onDoubleClick={e => { e.stopPropagation(); setRenamingId(c.id); setRenameValue(c.title || ''); }}
+                        className={`text-[13px] truncate max-w-[150px] ${activeConvId === c.id ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
+                        {c.pinned && <span className="text-[10px] text-gray-400 mr-1">📌</span>}
+                        {c.title || 'New conversation'}
+                      </span>
+                    )}
                     <span className="text-[11px] text-gray-400">{timeAgo(c.updatedAt)}</span>
                   </div>
                   {c.lastMessage && <span className="text-[12px] text-gray-400 truncate">{c.lastMessage}</span>}
