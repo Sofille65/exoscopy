@@ -2,3 +2,7 @@ node_modules/
 data/
 .DS_Store
 *.tmp
+CLAUDE.md
+DESIGN.md
+docs/
+logo/
