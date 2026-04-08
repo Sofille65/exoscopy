@@ -117,6 +117,8 @@ docker run -d --name exoscopy \
 
 Your settings, conversations, and downloads are preserved in the `exoscopy-data` volume.
 
+> **WARNING**: Never run `docker volume rm exoscopy-data` — this will permanently delete all your settings, conversations, and download history. The volume is safe through `docker stop`, `docker rm`, and `docker pull` — only `docker volume rm` destroys it.
+
 ### Docker Compose
 
 ```bash
