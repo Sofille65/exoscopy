@@ -57,6 +57,8 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>window.__exoPlugins = window.__exoPlugins || [];</script>
+  <script src="/plugins/extended/ui.js" onerror=""></script>
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
     const socket = io();
@@ -301,7 +303,8 @@
     }
 
     function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp }) {
-      const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
+      const pluginPages = (window.__exoPlugins || []).flatMap(p => p.pages || []);
+      const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings', ...pluginPages.map(p => p.label)];
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
 
@@ -2243,6 +2246,9 @@
           {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
           {page === 'Downloads' && <DownloadsPage />}
           {page === 'Settings' && <SettingsPage settings={settings} refreshSettings={refreshSettings} />}
+          {(window.__exoPlugins || []).flatMap(p => (p.pages || []).map(pg =>
+            page === pg.label && React.createElement(pg.component, { key: pg.id, settings, clusterStatus })
+          ))}
         </div>
       );
     }
@@ -2271,7 +2277,5 @@
       <ErrorBoundary><App /></ErrorBoundary>
     );
   </script>
-  <script>window.__exoPlugins = window.__exoPlugins || [];</script>
-  <script src="/plugins/extended/ui.js" onerror=""></script>
 </body>
 </html>
