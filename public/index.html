@@ -278,6 +278,19 @@
                   <li><strong>SSH Keys</strong> — enter passwords per node, click "Setup SSH Keys" to install keys (container + inter-node)</li>
                   <li><strong>Config Check</strong> — verify SSH, exo API, Python, huggingface_hub, rsync, model path, disk free per node</li>
                   <li><strong>EXO Endpoint</strong> — IP and port of your exo master node</li>
+                  <li><strong>OpenRouter</strong> — optional cloud fallback. Add your API key (sk-or-...) to access cloud models (GPT-4, Claude, Gemini, etc.) alongside local exo models</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 text-base mb-2">OpenRouter (Cloud)</h3>
+                <ul className="list-disc ml-5 flex flex-col gap-1">
+                  <li>Go to <strong>Settings</strong> → enter your OpenRouter API key → <strong>Save Settings</strong></li>
+                  <li>In <strong>Chat</strong>, an <strong>EXO / Cloud</strong> toggle appears next to the model dropdown</li>
+                  <li>Switch to <strong>Cloud</strong> to browse models from OpenAI, Anthropic, Google, Meta, Mistral, and more</li>
+                  <li>Models are grouped by provider in the dropdown for easy browsing</li>
+                  <li>No toggle shown if no API key is configured — exo-only by default</li>
+                  <li>Get your API key at <a href="https://openrouter.ai" target="_blank" className="text-indigo-500 underline">openrouter.ai</a></li>
                 </ul>
               </div>
 
