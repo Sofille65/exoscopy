@@ -5,7 +5,7 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || path.join(__dirname, '..', 'd
 
 // ─── Defaults — no hardcoded IPs, EXO only ───────────────────
 const DEFAULTS = {
-  version: '1.2.1',
+  version: '1.3.0',
 
   // EXO nodes — empty by default, populated via discovery or Settings
   nodes: [],
@@ -21,6 +21,9 @@ const DEFAULTS = {
   // SSH access to nodes (for download, metrics, sync)
   sshUser: 'admin',
   sshOpts: '-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i /root/.ssh/id_ed25519',
+
+  // OpenRouter (optional cloud fallback)
+  openRouterApiKey: '',
 
   // System prompt
   systemPrompt: '',

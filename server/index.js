@@ -1078,12 +1078,16 @@ app.post('/api/conversations/:id/inference/clear', (req, res) => {
 
 /** Return base URL for a chat engine key (from settings.chat), with fallback to first node. */
 function getChatEndpoint(engine) {
+  if (engine === 'openrouter') {
+    const settings = getSettings();
+    return settings.openRouterApiKey ? { base: 'https://openrouter.ai/api', type: 'openrouter', apiKey: settings.openRouterApiKey } : null;
+  }
   const settings = getSettings();
   const cfg      = (settings.chat || {})[engine];
   const ip = cfg?.ip || settings.nodes?.[0]?.ip;
   const port = cfg?.port || settings.exoPort || 52415;
   if (!ip) return null;
-  return `http://${ip}:${port}`;
+  return { base: `http://${ip}:${port}`, type: 'exo', apiKey: null };
 }
 
 // GET /api/chat/engines — list configured EXO chat engines
@@ -1115,13 +1119,13 @@ app.get('/api/chat/engines', (req, res) => {
 // GET /api/chat/active-model?engine=exo1|exo2 — currently loaded model via /state
 app.get('/api/chat/active-model', async (req, res) => {
   const engine = req.query.engine || 'exo1';
-  const base   = getChatEndpoint(engine);
-  if (!base) return res.json({ activeModel: null });
+  const eng    = getChatEndpoint(engine);
+  if (!eng || eng.type !== 'exo') return res.json({ activeModel: null });
 
   try {
     const controller = new AbortController();
     const timer      = setTimeout(() => controller.abort(), 4000);
-    const r    = await fetch(`${base}/state`, { signal: controller.signal });
+    const r    = await fetch(`${eng.base}/state`, { signal: controller.signal });
     clearTimeout(timer);
     const data = await r.json();
 
@@ -1137,23 +1141,43 @@ app.get('/api/chat/active-model', async (req, res) => {
   }
 });
 
-// GET /api/chat/models?engine=exo1 — installed models only (from /state DownloadCompleted)
-// exo /v1/models returns the full catalog (100+ including non-downloaded).
-// We parse /state → downloads to find DownloadCompleted entries = actually on disk.
+// GET /api/chat/models?engine=exo1|openrouter — models list
 app.get('/api/chat/models', async (req, res) => {
   const engine = req.query.engine || 'exo1';
-  const base   = getChatEndpoint(engine);
-  if (!base) return res.status(400).json({ error: `Unknown engine: ${engine}` });
+  const eng    = getChatEndpoint(engine);
+  if (!eng) return res.status(400).json({ error: `Unknown engine: ${engine}` });
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const r = await fetch(`${base}/state`, { signal: controller.signal });
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    if (eng.type === 'openrouter') {
+      // OpenRouter: /v1/models with API key — grouped by provider
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${eng.apiKey}` };
+      const r = await fetch(`${eng.base}/v1/models`, { headers, signal: controller.signal });
+      clearTimeout(timer);
+      if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
+      const data = await r.json();
+      const allModels = (data.data || [])
+        .filter(m => m.id)
+        .map(m => {
+          const provider = m.id.split('/')[0] || 'other';
+          return { id: m.id, name: m.name || m.id, context: m.context_length, pricing: m.pricing, group: provider };
+        })
+        .sort((a, b) => a.group.localeCompare(b.group) || a.id.localeCompare(b.id));
+      const groups = {};
+      for (const m of allModels) {
+        if (!groups[m.group]) groups[m.group] = [];
+        groups[m.group].push(m);
+      }
+      return res.json({ engine, models: allModels, groups });
+    }
+
+    // EXO: installed models from /state DownloadCompleted
+    const r = await fetch(`${eng.base}/state`, { signal: controller.signal });
     clearTimeout(timer);
     if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
     const state = await r.json();
-
-    // Extract completed downloads across all nodes
     const completedModels = new Set();
     const downloads = state.downloads || {};
     for (const [peerId, nodeDownloads] of Object.entries(downloads)) {
@@ -1166,8 +1190,6 @@ app.get('/api/chat/models', async (req, res) => {
         }
       }
     }
-
-    // Filter out models deleted from all nodes
     const models = [...completedModels]
       .filter(id => ![...deletedModels].some(d => d.startsWith(`${id}::`)))
       .sort().map(id => ({ id, name: id }));
@@ -1185,31 +1207,49 @@ app.post('/api/chat/completions', async (req, res) => {
     conversationId,
   } = req.body;
 
-  const base = getChatEndpoint(engine || 'exo1');
-  if (!base) return res.status(400).json({ error: `Unknown engine: ${engine}` });
+  const eng = getChatEndpoint(engine || 'exo1');
+  if (!eng) return res.status(400).json({ error: `Unknown engine: ${engine}` });
 
   const isStreaming = stream !== false;
 
-  // Build request body — EXO-only params
+  // Build request body — adapt per engine type
   const body = {
     model,
     messages: [...messages],
     stream: isStreaming,
   };
-  if (isStreaming)           body.stream_options      = { include_usage: true };
-  if (temperature != null)   body.temperature         = temperature;
-  if (max_tokens  != null)   body.max_tokens          = max_tokens;
-  // CRITICAL: always send enable_thinking explicitly.
-  // Qwen3.5 activates thinking by default if not sent → TTFT 30-50s instead of 1-2s
-  body.enable_thinking = thinking === true;
-  if (top_p       != null)   body.top_p               = top_p;
-  if (top_k       != null)   body.top_k               = top_k;
-  if (min_p       != null)   body.min_p               = min_p;
-  if (repetition_penalty != null) body.repetition_penalty = repetition_penalty;
-  if (seed        != null)   body.seed                = seed;
-  if (thinking && reasoning_effort) body.reasoning_effort = reasoning_effort;
 
-  console.log(`[chat] engine=${engine} model="${model}" conv=${conversationId || 'none'} stream=${body.stream} → ${base}/v1/chat/completions`);
+  if (eng.type === 'exo') {
+    // EXO-specific params
+    if (isStreaming)           body.stream_options        = { include_usage: true };
+    if (temperature != null)   body.temperature           = temperature;
+    if (max_tokens  != null)   body.max_tokens            = max_tokens;
+    body.enable_thinking = thinking === true;
+    if (top_p       != null)   body.top_p                 = top_p;
+    if (top_k       != null)   body.top_k                 = top_k;
+    if (min_p       != null)   body.min_p                 = min_p;
+    if (repetition_penalty != null) body.repetition_penalty = repetition_penalty;
+    if (seed        != null)   body.seed                  = seed;
+    if (thinking && reasoning_effort) body.reasoning_effort = reasoning_effort;
+  } else {
+    // OpenRouter / standard OpenAI params
+    if (temperature != null)   body.temperature           = temperature;
+    if (max_tokens  != null)   body.max_tokens            = max_tokens;
+    if (top_p       != null)   body.top_p                 = top_p;
+    if (seed        != null)   body.seed                  = seed;
+  }
+
+  // Build headers per engine type
+  const headers = { 'Content-Type': 'application/json' };
+  if (eng.type === 'openrouter' && eng.apiKey) {
+    headers['Authorization'] = `Bearer ${eng.apiKey}`;
+    headers['HTTP-Referer']  = 'https://exoscopy.local';
+    headers['X-Title']       = 'ExoScopy';
+  } else {
+    headers['Authorization'] = 'Bearer x';
+  }
+
+  console.log(`[chat] engine=${engine} type=${eng.type} model="${model}" conv=${conversationId || 'none'} stream=${body.stream}`);
 
   // Persist user message
   if (conversationId) {
@@ -1221,9 +1261,9 @@ app.post('/api/chat/completions', async (req, res) => {
   }
 
   try {
-    const fetchRes = await fetch(`${base}/v1/chat/completions`, {
+    const fetchRes = await fetch(`${eng.base}/v1/chat/completions`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer x' },
+      headers,
       body:    JSON.stringify(body),
     });
 

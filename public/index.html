@@ -57,8 +57,6 @@
 </head>
 <body>
   <div id="root"></div>
-  <script>window.__exoPlugins = window.__exoPlugins || [];</script>
-  <script src="/plugins/extended/ui.js" onerror=""></script>
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
     const socket = io();
@@ -303,8 +301,7 @@
     }
 
     function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp }) {
-      const pluginPages = (window.__exoPlugins || []).flatMap(p => p.pages || []);
-      const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings', ...pluginPages.map(p => p.label)];
+      const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
 
@@ -359,6 +356,8 @@
       const [streaming, setStreaming] = useState(false);
       const [activeModel, setActiveModel] = useState(null);
       const [models, setModels] = useState([]);
+      const [modelGroups, setModelGroups] = useState(null);
+      const [chatSource, setChatSource] = useState('exo'); // 'exo' or 'openrouter'
       const [selectedModel, setSelectedModel] = useState('');
       const [preset, setPreset] = useState('normal');
       const [showSettings, setShowSettings] = useState(false);
@@ -390,22 +389,29 @@
         code: { temperature: 0.2, topP: 0.9, topK: 50, minP: 0.05, maxTokens: 65536, thinking: false },
       };
 
-      // Load conversations + models + active model
+      // Load conversations
       useEffect(() => {
         fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
+      }, []);
+
+      // Load models when source changes
+      useEffect(() => {
+        const engineKey = chatSource === 'openrouter' ? 'openrouter' : 'exo1';
+        setModels([]); setModelGroups(null);
         Promise.all([
-          fetch('/api/chat/models?engine=exo1').then(r => r.json()),
+          fetch(`/api/chat/models?engine=${engineKey}`).then(r => r.json()),
           fetch('/api/chat/active-model?engine=exo1').then(r => r.json()),
         ]).then(([modelsData, activeData]) => {
           const modelList = modelsData.models || [];
           setModels(modelList);
-          if (activeData.activeModel) {
+          setModelGroups(modelsData.groups || null);
+          if (chatSource === 'exo' && activeData.activeModel) {
             setActiveModel(activeData.activeModel);
             setSelectedModel(activeData.activeModel);
             localStorage.setItem('exoscopy-last-model', activeData.activeModel);
           } else {
-            // No active model — try last used, then first installed
-            const lastModel = localStorage.getItem('exoscopy-last-model');
+            setActiveModel(chatSource === 'exo' ? (activeData.activeModel || null) : null);
+            const lastModel = localStorage.getItem(`exoscopy-last-model-${chatSource}`);
             if (lastModel && modelList.find(m => m.id === lastModel)) {
               setSelectedModel(lastModel);
             } else if (modelList.length > 0) {
@@ -413,7 +419,7 @@
             }
           }
         }).catch(() => {});
-      }, []);
+      }, [chatSource]);
 
       // Load conversation messages when active changes
       useEffect(() => {
@@ -484,7 +490,7 @@
 
       // Create new conversation
       async function newConversation() {
-        const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: 'exo1', model: selectedModel }) }).then(r => r.json());
+        const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel }) }).then(r => r.json());
         setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
         setActiveConvId(conv.id);
         setMessages([]);
@@ -507,8 +513,8 @@
           setTimeout(() => setChatWarning(null), 5000);
           return;
         }
-        // Auto-load model on exo if none is active
-        if (!activeModel) {
+        // Auto-load model on exo if none is active (skip for openrouter)
+        if (!activeModel && chatSource === 'exo') {
           setChatWarning(`Loading ${selectedModel.split('/').pop()} on cluster...`);
           try {
             const loadRes = await fetch('/api/monitoring/load', {
@@ -545,7 +551,7 @@
 
         let convId = activeConvId;
         if (!convId) {
-          const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: 'exo1', model: selectedModel }) }).then(r => r.json());
+          const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel }) }).then(r => r.json());
           convId = conv.id;
           setActiveConvId(convId);
           setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
@@ -573,7 +579,7 @@
 
         try {
           const body = {
-            engine: 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
+            engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
             conversationId: convId,
             temperature: params.temperature, max_tokens: params.maxTokens,
           };
@@ -738,12 +744,29 @@
             {/* Chat header */}
             <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-3">
-                <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem('exoscopy-last-model', e.target.value); }}
-                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none">
-                  {models.map(m => (
-                    <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
-                  ))}
-                  {models.length === 0 && <option value="">No models available</option>}
+                {/* Source toggle: exo / openrouter */}
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden mr-1">
+                  <button onClick={() => setChatSource('exo')}
+                    className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'exo' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-400 hover:bg-gray-50'}`}>EXO</button>
+                  <button onClick={() => setChatSource('openrouter')}
+                    className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'openrouter' ? 'bg-indigo-100 font-semibold text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}>Cloud</button>
+                </div>
+                <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
+                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-[350px]">
+                  {modelGroups ? (
+                    Object.entries(modelGroups).sort(([a],[b]) => a.localeCompare(b)).map(([group, gModels]) => (
+                      <optgroup key={group} label={group.charAt(0).toUpperCase() + group.slice(1)}>
+                        {gModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.id.split('/').slice(1).join('/')}</option>
+                        ))}
+                      </optgroup>
+                    ))
+                  ) : (
+                    models.map(m => (
+                      <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
+                    ))
+                  )}
+                  {models.length === 0 && <option value="">{chatSource === 'openrouter' ? 'Add API key in Settings' : 'No models available'}</option>}
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -1893,6 +1916,7 @@
       const [discovering, setDiscovering] = useState(false);
       const [discovered, setDiscovered] = useState([]);
       const [testResult, setTestResult] = useState(null);
+      const [openRouterKey, setOpenRouterKey] = useState(settings?.openRouterApiKey || '');
       const [sshStatus, setSshStatus] = useState({}); // ip → { ok, method }
       const [setupResult, setSetupResult] = useState(null);
       const [configCheck, setConfigCheck] = useState(null);
@@ -1904,6 +1928,7 @@
           setExoIp(settings.chat?.exo1?.ip || '');
           setExoPort(settings.chat?.exo1?.port || 52415);
           setSshUser(settings.sshUser || 'admin');
+          setOpenRouterKey(settings.openRouterApiKey || '');
         }
       }, [settings]);
 
@@ -1913,6 +1938,7 @@
           nodes,
           chat: { exo1: { name: 'EXO', ip: exoIp, port: exoPort } },
           sshUser,
+          openRouterApiKey: openRouterKey,
           setupComplete: nodes.length > 0,
         };
         await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
@@ -2188,6 +2214,17 @@
               </div>
             </div>
 
+            {/* OpenRouter */}
+            <div className="flex flex-col gap-2.5">
+              <span className="text-sm font-semibold text-gray-900">OpenRouter (optional cloud fallback)</span>
+              <p className="text-xs text-gray-400">Add your OpenRouter API key to access cloud models alongside your local exo cluster.</p>
+              <div className="flex gap-3 items-center">
+                <input type="password" value={openRouterKey} onChange={e => setOpenRouterKey(e.target.value)}
+                  placeholder="sk-or-..." className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[400px]" />
+                {openRouterKey && <span className="text-[11px] text-emerald-500">Key configured</span>}
+              </div>
+            </div>
+
             {/* Save */}
             <button onClick={save} className="self-start px-6 py-2.5 bg-exo rounded-lg text-sm font-semibold text-gray-900 hover:brightness-95">
               Save Settings
@@ -2246,9 +2283,6 @@
           {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
           {page === 'Downloads' && <DownloadsPage />}
           {page === 'Settings' && <SettingsPage settings={settings} refreshSettings={refreshSettings} />}
-          {(window.__exoPlugins || []).flatMap(p => (p.pages || []).map(pg =>
-            page === pg.label && React.createElement(pg.component, { key: pg.id, settings, clusterStatus })
-          ))}
         </div>
       );
     }
