@@ -1077,6 +1077,7 @@
       const [loadModel, setLoadModel] = useState('');
       const [sharding, setSharding] = useState('Pipeline');
       const [loadStatus, setLoadStatus] = useState(null);
+      const [modelPreview, setModelPreview] = useState(null);
       const [activeSyncs, setActiveSyncs] = useState([]);
       const [deleteSelection, setDeleteSelection] = useState(new Set());
       const [deleting, setDeleting] = useState(false);
@@ -1172,11 +1173,18 @@
               <span className="text-[13px] text-gray-500">No model loaded</span>
             )}
             <div className="flex-1" />
-            <select value={loadModel} onChange={e => setLoadModel(e.target.value)}
-              className="mono text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 min-w-[280px]">
+            <select value={loadModel} onChange={e => {
+              setLoadModel(e.target.value);
+              if (e.target.value) {
+                fetch(`/api/chat/instance-preview?modelId=${encodeURIComponent(e.target.value)}`).then(r => r.json()).then(d => setModelPreview(d.previews?.[0] || null)).catch(() => setModelPreview(null));
+              } else { setModelPreview(null); }
+            }} className="mono text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 min-w-[280px]">
               <option value="">Select a model...</option>
               {chatModels.map(m => <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>)}
             </select>
+            {modelPreview && (
+              <span className="mono text-[10px] text-gray-400">{modelPreview.storageGB} GB · {modelPreview.nLayers} layers · {modelPreview.nodeCount}n</span>
+            )}
             <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
               <button onClick={() => setSharding('Pipeline')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
               <button onClick={() => setSharding('Tensor')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>

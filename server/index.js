@@ -1173,29 +1173,68 @@ app.get('/api/chat/models', async (req, res) => {
       return res.json({ engine, models: allModels, groups });
     }
 
-    // EXO: installed models from /state DownloadCompleted
-    const r = await fetch(`${eng.base}/state`, { signal: controller.signal });
+    // EXO: use /v1/models?status=downloaded (cleaner than parsing /state DownloadCompleted)
+    const r = await fetch(`${eng.base}/v1/models?status=downloaded`, { signal: controller.signal });
     clearTimeout(timer);
     if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
-    const state = await r.json();
-    const completedModels = new Set();
-    const downloads = state.downloads || {};
-    for (const [peerId, nodeDownloads] of Object.entries(downloads)) {
-      for (const entry of nodeDownloads) {
-        if (entry.DownloadCompleted) {
-          const meta = entry.DownloadCompleted.shardMetadata;
-          const modelId = meta?.PipelineShardMetadata?.modelCard?.modelId
-                       || meta?.TensorShardMetadata?.modelCard?.modelId;
-          if (modelId) completedModels.add(modelId);
-        }
-      }
-    }
-    const models = [...completedModels]
-      .filter(id => ![...deletedModels].some(d => d.startsWith(`${id}::`)))
-      .sort().map(id => ({ id, name: id }));
+    const data = await r.json();
+    const models = (data.data || [])
+      .filter(m => ![...deletedModels].some(d => d.startsWith(`${m.id}::`)))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map(m => ({ id: m.id, name: m.id, family: m.family, quantization: m.quantization }));
     res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
+  }
+});
+
+// POST /api/chat/cancel/:commandId — cancel an active generation via exo
+app.post('/api/chat/cancel/:commandId', async (req, res) => {
+  const eng = getChatEndpoint('exo1');
+  if (!eng || eng.type !== 'exo') return res.status(400).json({ error: 'No exo endpoint' });
+  try {
+    const r = await fetch(`${eng.base}/v1/cancel/${req.params.commandId}`, { method: 'POST' });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/chat/instance-preview?modelId=... — check placement/RAM before loading
+app.get('/api/chat/instance-preview', async (req, res) => {
+  const eng = getChatEndpoint('exo1');
+  if (!eng || eng.type !== 'exo') return res.json({ error: 'No exo endpoint' });
+  const modelId = req.query.modelId;
+  if (!modelId) return res.status(400).json({ error: 'modelId required' });
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const r = await fetch(`${eng.base}/instance/previews?model_id=${encodeURIComponent(modelId)}`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ previews: [] });
+    const data = await r.json();
+    // Extract useful info from previews
+    const previews = (data.previews || []).map(p => {
+      const inner = p.instance?.[Object.keys(p.instance || {})[0]];
+      const shard = inner?.shardAssignments;
+      const runners = shard?.runnerToShard || {};
+      const firstRunner = Object.values(runners)[0];
+      const meta = firstRunner?.PipelineShardMetadata?.modelCard || firstRunner?.TensorShardMetadata?.modelCard || {};
+      return {
+        modelId: p.model_id,
+        sharding: p.sharding,
+        instanceMeta: p.instance_meta,
+        nodeCount: Object.keys(runners).length,
+        storageGB: meta.storageSize ? Math.round(meta.storageSize.inBytes / 1073741824) : null,
+        nLayers: meta.nLayers,
+        family: meta.family,
+        quantization: meta.quantization,
+      };
+    });
+    res.json({ previews });
+  } catch (e) {
+    res.json({ previews: [], error: e.message });
   }
 });
 
