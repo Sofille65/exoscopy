@@ -34,6 +34,7 @@ const io     = new Server(server, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use('/plugins', express.static(path.join(__dirname, '..', 'plugins')));
 
 const PORT = 3456;
 
@@ -1910,6 +1911,20 @@ io.on('connection', (socket) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const settings = getSettings();
+
+// ─── Plugin loader (optional) ───────────────────────────────────────────────
+const pluginDir = path.join(__dirname, '..', 'plugins');
+if (fs.existsSync(pluginDir)) {
+  fs.readdirSync(pluginDir)
+    .filter(d => fs.existsSync(path.join(pluginDir, d, 'index.js')))
+    .forEach(d => {
+      try {
+        const plugin = require(path.join(pluginDir, d, 'index.js'));
+        plugin({ app, io, server, sshExec, getSettings, saveSettings, getExoNodes });
+        console.log(`  Plugin loaded: ${d}`);
+      } catch (e) { console.error(`  Plugin error (${d}):`, e.message); }
+    });
+}
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ExoScopy v${settings.version || '1.0.0'}`);

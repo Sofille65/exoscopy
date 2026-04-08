@@ -1,5 +1,6 @@
 node_modules/
 data/
+plugins/
 .DS_Store
 *.tmp
 CLAUDE.md
