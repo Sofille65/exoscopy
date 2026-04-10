@@ -147,6 +147,46 @@ function requireRole(...roles) {
   };
 }
 
+// ─── Auth Log ────────────────────────────────────────────────
+
+const AUTH_LOG_PATH = path.join(DATA_DIR, 'auth-log.json');
+const AUTH_LOG_MAX = 500; // keep last 500 entries
+
+function loadAuthLog() {
+  try {
+    if (fs.existsSync(AUTH_LOG_PATH)) return JSON.parse(fs.readFileSync(AUTH_LOG_PATH, 'utf8'));
+  } catch (e) {}
+  return [];
+}
+
+function saveAuthLog(log) {
+  const dir = path.dirname(AUTH_LOG_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(AUTH_LOG_PATH, JSON.stringify(log, null, 2), 'utf8');
+}
+
+function logAuthEvent(action, username, ip, extra = {}) {
+  const log = loadAuthLog();
+  log.push({
+    ts: new Date().toISOString(),
+    action,        // 'login' | 'logout' | 'guest' | 'login_failed'
+    username,
+    ip: ip || 'unknown',
+    ...extra,
+  });
+  // Trim to max
+  if (log.length > AUTH_LOG_MAX) log.splice(0, log.length - AUTH_LOG_MAX);
+  saveAuthLog(log);
+}
+
+function getAuthLog() {
+  return loadAuthLog();
+}
+
+function clearAuthLog() {
+  saveAuthLog([]);
+}
+
 // ─── Data migration ──────────────────────────────────────────
 
 function migrateToAdminMode() {
@@ -167,4 +207,5 @@ module.exports = {
   getUser, createUser, updateUser, deleteUser, listUsers,
   verifyPassword, ensureAdminUser, migrateToAdminMode,
   authMiddleware, requireRole,
+  logAuthEvent, getAuthLog, clearAuthLog,
 };

@@ -29,6 +29,7 @@ const {
   getSessionSecret, getUser, createUser, updateUser, deleteUser, listUsers,
   verifyPassword, ensureAdminUser, migrateToAdminMode,
   authMiddleware, requireRole,
+  logAuthEvent, getAuthLog, clearAuthLog,
 } = require('./auth');
 
 // ─── Express + Socket.IO bootstrap ───────────────────────────────────────────
@@ -147,16 +148,27 @@ app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
 
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const user = getUser(username);
-  if (!user || !user.active) return res.status(401).json({ error: 'Invalid credentials' });
-  if (!verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!user || !user.active) {
+    logAuthEvent('login_failed', username, clientIp);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  if (!verifyPassword(password, user.passwordHash)) {
+    logAuthEvent('login_failed', username, clientIp);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
 
   req.session.username = user.username;
+  logAuthEvent('login', user.username, clientIp, { role: user.role });
   res.json({ username: user.username, role: user.role });
 });
 
 // POST /api/auth/logout
 app.post('/api/auth/logout', (req, res) => {
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const who = req.session?.username || (req.session?.guest ? 'guest' : 'unknown');
+  logAuthEvent('logout', who, clientIp);
   req.session = null;
   res.json({ ok: true });
 });
@@ -169,6 +181,8 @@ app.post('/api/auth/guest', (req, res) => {
   }
   req.session.guest = true;
   req.session.guestTokensUsed = 0;
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  logAuthEvent('guest', 'guest', clientIp);
   res.json({ username: 'guest', role: 'guest', tokensUsed: 0, tokenLimit: settings.guestTokenLimit });
 });
 
@@ -211,6 +225,19 @@ app.put('/api/admin/users/:username', requireRole('admin'), (req, res) => {
 app.delete('/api/admin/users/:username', requireRole('admin'), (req, res) => {
   const ok = deleteUser(req.params.username);
   if (!ok) return res.status(400).json({ error: 'Cannot delete this user' });
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN — AUTH LOG API
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get('/api/admin/auth-log', requireRole('admin'), (req, res) => {
+  res.json(getAuthLog());
+});
+
+app.delete('/api/admin/auth-log', requireRole('admin'), (req, res) => {
+  clearAuthLog();
   res.json({ ok: true });
 });
 
