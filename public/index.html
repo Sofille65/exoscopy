@@ -2654,10 +2654,18 @@
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
             {guestMode && (
-              <button type="button" onClick={handleGuest} disabled={loading}
-                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition disabled:opacity-40">
-                Continue as Guest
-              </button>
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-[11px] text-gray-400">or</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+                <button type="button" onClick={handleGuest} disabled={loading}
+                  className="px-4 py-2.5 border border-gray-200 text-sm text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition disabled:opacity-40 flex flex-col items-center gap-0.5">
+                  <span>Try as Guest</span>
+                  <span className="text-[10px] text-gray-400 font-normal">Chat only — limited tokens</span>
+                </button>
+              </>
             )}
           </form>
         </div>
