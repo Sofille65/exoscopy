@@ -5,7 +5,7 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || path.join(__dirname, '..', 'd
 
 // ─── Defaults — no hardcoded IPs, EXO only ───────────────────
 const DEFAULTS = {
-  version: '1.3.2',
+  version: '1.4.0',
 
   // EXO nodes — empty by default, populated via discovery or Settings
   nodes: [],
@@ -28,6 +28,10 @@ const DEFAULTS = {
   // System prompt
   systemPrompt: '',
   systemPromptEnabled: false,
+
+  // Admin mode (multi-user)
+  adminMode: false,
+  adminPasswordHash: null,
 
   // First-run setup
   setupComplete: false,

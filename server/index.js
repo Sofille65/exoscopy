@@ -16,14 +16,20 @@ const fs       = require('fs');
 const net      = require('net');
 const os       = require('os');
 
+const cookieSession = require('cookie-session');
+
 const { getSettings, saveSettings } = require('./settings');
 const { scanAllNodes }                          = require('./scanner');
 const {
-  listConversations, getConversation, createConversation,
-  updateConversation, deleteConversation, addMessage,
+  createConversationStore,
   startInference, appendInferenceContent, finishInference,
   getInferenceStatus, clearInference,
 } = require('./conversations');
+const {
+  getSessionSecret, getUser, createUser, updateUser, deleteUser, listUsers,
+  verifyPassword, ensureAdminUser, migrateToAdminMode,
+  authMiddleware, requireRole,
+} = require('./auth');
 
 // ─── Express + Socket.IO bootstrap ───────────────────────────────────────────
 
@@ -33,25 +39,76 @@ const io     = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(cookieSession({ name: 'exoscopy', keys: [getSessionSecret()], maxAge: 24 * 60 * 60 * 1000 }));
+app.use(authMiddleware(getSettings));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/plugins', express.static(path.join(__dirname, '..', 'plugins')));
 
 const PORT = 3456;
+const DATA_DIR = path.join(__dirname, '..', 'data');
+
+// ─── User-scoped conversation stores ─────────────────────────────────────────
+
+const defaultConvStore = createConversationStore(path.join(DATA_DIR, 'conversations.json'));
+const _userStores = {};
+
+function getConvStore(req) {
+  const settings = getSettings();
+  if (settings.adminMode && req.user) {
+    const username = req.user.username;
+    if (!_userStores[username]) {
+      const userDir = path.join(DATA_DIR, 'users', username);
+      if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+      _userStores[username] = createConversationStore(path.join(userDir, 'conversations.json'));
+    }
+    return _userStores[username];
+  }
+  return defaultConvStore;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS API
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GET /api/settings — return current settings
+// GET /api/settings — return current settings (strip sensitive fields for non-admin)
 app.get('/api/settings', (req, res) => {
-  res.json(getSettings());
+  const settings = getSettings();
+  // Don't expose password hash or OpenRouter key to regular users
+  if (settings.adminMode && req.user?.role !== 'admin') {
+    const { adminPasswordHash, openRouterApiKey, ...safe } = settings;
+    return res.json(safe);
+  }
+  res.json(settings);
 });
 
-// PUT /api/settings — update settings (partial merge)
+// PUT /api/settings — update settings (partial merge, admin only when adminMode is on)
 app.put('/api/settings', (req, res) => {
   try {
     const current = getSettings();
     const update  = req.body;
+
+    // When adminMode is already on, only admin can change settings
+    if (current.adminMode && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+
+    // Handle admin mode activation
+    if (update.adminMode === true && !current.adminMode) {
+      if (!update.adminPassword) {
+        return res.status(400).json({ error: 'adminPassword required to enable admin mode' });
+      }
+      ensureAdminUser(update.adminPassword);
+      migrateToAdminMode();
+      delete update.adminPassword;
+    }
+
+    // Handle admin mode deactivation
+    if (update.adminMode === false && current.adminMode) {
+      if (req.user?.role !== 'admin') {
+        return res.status(403).json({ error: 'Only admin can disable admin mode' });
+      }
+      delete update.adminPassword;
+    }
 
     // Validate nodes array (0-10 elements, each needs name + ip)
     if (update.nodes) {
@@ -62,7 +119,6 @@ app.put('/api/settings', (req, res) => {
         if (!n.name || !n.ip) {
           return res.status(400).json({ error: 'Each node needs name and ip' });
         }
-        // Ensure paths.exo has a default
         if (!n.paths) n.paths = { exo: '~/.exo/models' };
         if (!n.paths.exo) n.paths.exo = '~/.exo/models';
       }
@@ -74,6 +130,71 @@ app.put('/api/settings', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH API
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/auth/status — public, returns whether admin mode is active
+app.get('/api/auth/status', (req, res) => {
+  const settings = getSettings();
+  res.json({ adminMode: !!settings.adminMode });
+});
+
+// POST /api/auth/login — public, authenticate user
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+  const user = getUser(username);
+  if (!user || !user.active) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid credentials' });
+
+  req.session.username = user.username;
+  res.json({ username: user.username, role: user.role });
+});
+
+// POST /api/auth/logout
+app.post('/api/auth/logout', (req, res) => {
+  req.session = null;
+  res.json({ ok: true });
+});
+
+// GET /api/auth/me — returns current user info
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ username: req.user.username, role: req.user.role });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN — USER MANAGEMENT API
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get('/api/admin/users', requireRole('admin'), (req, res) => {
+  res.json(listUsers());
+});
+
+app.post('/api/admin/users', requireRole('admin'), (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  if (username.length < 2 || username.length > 30) return res.status(400).json({ error: 'username must be 2-30 characters' });
+  if (password.length < 4) return res.status(400).json({ error: 'password must be at least 4 characters' });
+  const user = createUser(username, password, role || 'user');
+  if (!user) return res.status(409).json({ error: 'User already exists' });
+  res.json(user);
+});
+
+app.put('/api/admin/users/:username', requireRole('admin'), (req, res) => {
+  const updated = updateUser(req.params.username, req.body);
+  if (!updated) return res.status(404).json({ error: 'User not found' });
+  res.json(updated);
+});
+
+app.delete('/api/admin/users/:username', requireRole('admin'), (req, res) => {
+  const ok = deleteUser(req.params.username);
+  if (!ok) return res.status(400).json({ error: 'Cannot delete this user' });
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -836,7 +957,7 @@ print("DONE",flush=True)
 
 // POST /api/download — enqueue/start a HuggingFace model download
 // body: { modelId: 'mlx-community/ModelName', distributed?: boolean }
-app.post('/api/download', (req, res) => {
+app.post('/api/download', requireRole('admin'), (req, res) => {
   const { modelId, distributed } = req.body;
   if (!modelId || !modelId.includes('/')) {
     return res.status(400).json({ error: 'modelId must be in format community/model-name' });
@@ -856,7 +977,7 @@ app.get('/api/downloads', (req, res) => {
 });
 
 // POST /api/download/cancel/:id — stop an active or queued download
-app.post('/api/download/cancel/:id', (req, res) => {
+app.post('/api/download/cancel/:id', requireRole('admin'), (req, res) => {
   const dl = activeDownloads[req.params.id];
   if (!dl) return res.status(404).json({ error: 'Download not found' });
 
@@ -881,7 +1002,7 @@ app.post('/api/download/cancel/:id', (req, res) => {
 });
 
 // DELETE /api/download/:id — remove a download record entirely
-app.delete('/api/download/:id', (req, res) => {
+app.delete('/api/download/:id', requireRole('admin'), (req, res) => {
   const dl = activeDownloads[req.params.id];
   if (!dl) return res.status(404).json({ error: 'Download not found' });
   if (dl._child) { dl._child.kill('SIGTERM'); dl._child = null; }
@@ -892,7 +1013,7 @@ app.delete('/api/download/:id', (req, res) => {
 });
 
 // POST /api/download/restart/:id — restart a stopped/errored download
-app.post('/api/download/restart/:id', (req, res) => {
+app.post('/api/download/restart/:id', requireRole('admin'), (req, res) => {
   const old = activeDownloads[req.params.id];
   if (!old) return res.status(404).json({ error: 'Download not found' });
   const { modelId } = old;
@@ -1030,12 +1151,12 @@ app.delete('/api/system-prompts/:name', (req, res) => {
 
 // GET /api/conversations — lightweight list (no full messages)
 app.get('/api/conversations', (req, res) => {
-  res.json(listConversations());
+  res.json(getConvStore(req).listConversations());
 });
 
 // GET /api/conversations/:id — full conversation + inference status
 app.get('/api/conversations/:id', (req, res) => {
-  const conv = getConversation(req.params.id);
+  const conv = getConvStore(req).getConversation(req.params.id);
   if (!conv) return res.status(404).json({ error: 'Conversation not found' });
   const inference = getInferenceStatus(req.params.id);
   res.json({ ...conv, inference });
@@ -1043,20 +1164,20 @@ app.get('/api/conversations/:id', (req, res) => {
 
 // POST /api/conversations — create new conversation
 app.post('/api/conversations', (req, res) => {
-  const conv = createConversation(req.body);
+  const conv = getConvStore(req).createConversation(req.body);
   res.json(conv);
 });
 
 // PUT /api/conversations/:id — update (rename, pin, etc.)
 app.put('/api/conversations/:id', (req, res) => {
-  const conv = updateConversation(req.params.id, req.body);
+  const conv = getConvStore(req).updateConversation(req.params.id, req.body);
   if (!conv) return res.status(404).json({ error: 'Conversation not found' });
   res.json(conv);
 });
 
 // DELETE /api/conversations/:id
 app.delete('/api/conversations/:id', (req, res) => {
-  const ok = deleteConversation(req.params.id);
+  const ok = getConvStore(req).deleteConversation(req.params.id);
   if (!ok) return res.status(404).json({ error: 'Conversation not found' });
   res.json({ ok: true });
 });
@@ -1290,11 +1411,14 @@ app.post('/api/chat/completions', async (req, res) => {
 
   console.log(`[chat] engine=${engine} type=${eng.type} model="${model}" conv=${conversationId || 'none'} stream=${body.stream}`);
 
+  // Resolve user's conversation store
+  const convStore = getConvStore(req);
+
   // Persist user message
   if (conversationId) {
     const lastUserMsg = messages[messages.length - 1];
     if (lastUserMsg?.role === 'user') {
-      addMessage(conversationId, 'user', lastUserMsg.content);
+      convStore.addMessage(conversationId, 'user', lastUserMsg.content);
     }
     startInference(conversationId);
   }
@@ -1310,7 +1434,7 @@ app.post('/api/chat/completions', async (req, res) => {
       let errBody = '';
       try { errBody = await fetchRes.text(); } catch (e) {}
       console.error(`[chat] Upstream ${fetchRes.status}: ${errBody}`);
-      if (conversationId) finishInference(conversationId, errBody);
+      if (conversationId) finishInference(conversationId, convStore.addMessage, errBody);
       return res.status(fetchRes.status).json({
         error:  `Engine returned ${fetchRes.status}`,
         detail: errBody,
@@ -1360,9 +1484,9 @@ app.post('/api/chat/completions', async (req, res) => {
           }
         } catch (e) {
           console.error(`[chat] Stream error: ${e.message}`);
-          if (conversationId) finishInference(conversationId, e.message);
+          if (conversationId) finishInference(conversationId, convStore.addMessage, e.message);
         }
-        if (conversationId) finishInference(conversationId);
+        if (conversationId) finishInference(conversationId, convStore.addMessage);
         if (clientConnected) { try { res.end(); } catch (e) {} }
       };
       pump();
@@ -1370,13 +1494,13 @@ app.post('/api/chat/completions', async (req, res) => {
     } else {
       const data = await fetchRes.json();
       if (conversationId && data.choices?.[0]?.message?.content) {
-        addMessage(conversationId, 'assistant', data.choices[0].message.content);
-        finishInference(conversationId);
+        convStore.addMessage(conversationId, 'assistant', data.choices[0].message.content);
+        finishInference(conversationId, convStore.addMessage);
       }
       res.json(data);
     }
   } catch (e) {
-    if (conversationId) finishInference(conversationId, e.message);
+    if (conversationId) finishInference(conversationId, convStore.addMessage, e.message);
     res.status(502).json({ error: `Engine unreachable: ${e.message}` });
   }
 });
@@ -1620,7 +1744,7 @@ app.post('/api/ssh/test', async (req, res) => {
 
 // POST /api/ssh/setup-keys — generate key pair and install on all nodes via sshpass
 // body: { nodes: [{ ip, user, password }] }
-app.post('/api/ssh/setup-keys', async (req, res) => {
+app.post('/api/ssh/setup-keys', requireRole('admin'), async (req, res) => {
   const { nodes } = req.body;
   if (!nodes || !Array.isArray(nodes)) return res.status(400).json({ error: 'nodes array required' });
 
@@ -1728,7 +1852,7 @@ function saveDeletedModels() {
 
 // POST /api/models/sync — rsync a model from source node to target nodes
 // body: { modelId, sourceNode, targetNodes: [name], modelPath? }
-app.post('/api/models/sync', async (req, res) => {
+app.post('/api/models/sync', requireRole('admin'), async (req, res) => {
   const { modelId, sourceNode, targetNodes } = req.body;
   if (!modelId || !sourceNode || !targetNodes?.length) {
     return res.status(400).json({ error: 'modelId, sourceNode, and targetNodes required' });
@@ -1808,7 +1932,7 @@ app.post('/api/models/sync', async (req, res) => {
 
 // POST /api/models/delete — delete a model from a specific node via SSH
 // body: { modelId, nodeName }
-app.post('/api/models/delete', async (req, res) => {
+app.post('/api/models/delete', requireRole('admin'), async (req, res) => {
   const { modelId, nodeName } = req.body;
   if (!modelId || !nodeName) return res.status(400).json({ error: 'modelId and nodeName required' });
 

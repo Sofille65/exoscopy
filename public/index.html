@@ -313,8 +313,9 @@
       );
     }
 
-    function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp }) {
-      const pages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
+    function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp, user, onLogout }) {
+      const allPages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
+      const pages = user?.role === 'user' ? ['Chat', 'Dashboard'] : allPages;
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
 
@@ -351,6 +352,13 @@
               <span className="text-[11px]">↗</span>
               <span className="text-xs text-gray-500">exo Dashboard</span>
             </a>
+            {user && (
+              <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
+                <span className="text-xs text-gray-500">{user.username}</span>
+                {user.role === 'admin' && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-medium">Admin</span>}
+                <button onClick={onLogout} className="text-xs text-gray-400 hover:text-red-500 transition-colors">Logout</button>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -1971,7 +1979,7 @@
     // SETTINGS PAGE
     // ═══════════════════════════════════════════════════════════════════
 
-    function SettingsPage({ settings, refreshSettings }) {
+    function SettingsPage({ settings, refreshSettings, authState, setAuthState }) {
       const [nodes, setNodes] = useState(settings?.nodes || []);
       const [exoIp, setExoIp] = useState(settings?.chat?.exo1?.ip || '');
       const [exoPort, setExoPort] = useState(settings?.chat?.exo1?.port || 52415);
@@ -1990,6 +1998,12 @@
       const [configCheck, setConfigCheck] = useState(null);
       const [checking, setChecking] = useState(false);
       const [saveStatus, setSaveStatus] = useState(null);
+      // Admin mode
+      const [adminPassword, setAdminPassword] = useState('');
+      const [adminToggleError, setAdminToggleError] = useState('');
+      const [users, setUsers] = useState([]);
+      const [newUser, setNewUser] = useState({ username: '', password: '' });
+      const [userError, setUserError] = useState('');
 
       useEffect(() => {
         if (settings) {
@@ -2000,6 +2014,76 @@
           setOpenRouterKey(settings.openRouterApiKey || '');
         }
       }, [settings]);
+
+      // Load users when admin mode is on
+      useEffect(() => {
+        if (settings?.adminMode) {
+          fetch('/api/admin/users').then(r => r.ok ? r.json() : []).then(setUsers).catch(() => {});
+        }
+      }, [settings?.adminMode]);
+
+      async function toggleAdminMode() {
+        setAdminToggleError('');
+        if (!settings?.adminMode) {
+          // Enable admin mode
+          if (!adminPassword || adminPassword.length < 4) {
+            setAdminToggleError('Password must be at least 4 characters');
+            return;
+          }
+          const res = await fetch('/api/settings', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adminMode: true, adminPassword }),
+          });
+          if (!res.ok) { const d = await res.json(); setAdminToggleError(d.error); return; }
+          refreshSettings();
+          // Auto-login as admin with the password we just set
+          const loginRes = await fetch('/api/auth/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'admin', password: adminPassword }),
+          });
+          setAdminPassword('');
+          if (loginRes.ok) {
+            const user = await loginRes.json();
+            setAuthState({ adminMode: true, user });
+          }
+        } else {
+          // Disable admin mode
+          const res = await fetch('/api/settings', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adminMode: false }),
+          });
+          if (!res.ok) { const d = await res.json(); setAdminToggleError(d.error); return; }
+          await fetch('/api/auth/logout', { method: 'POST' });
+          setAuthState({ adminMode: false, user: null });
+          refreshSettings();
+        }
+      }
+
+      async function addUserAccount() {
+        setUserError('');
+        if (!newUser.username || !newUser.password) { setUserError('Username and password required'); return; }
+        const res = await fetch('/api/admin/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: newUser.username, password: newUser.password, role: 'user' }),
+        });
+        if (!res.ok) { const d = await res.json(); setUserError(d.error); return; }
+        setNewUser({ username: '', password: '' });
+        fetch('/api/admin/users').then(r => r.json()).then(setUsers).catch(() => {});
+      }
+
+      async function toggleUserActive(username, active) {
+        await fetch(`/api/admin/users/${username}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: !active }),
+        });
+        fetch('/api/admin/users').then(r => r.json()).then(setUsers).catch(() => {});
+      }
+
+      async function deleteUserAccount(username) {
+        if (!confirm(`Delete user "${username}"?`)) return;
+        await fetch(`/api/admin/users/${username}`, { method: 'DELETE' });
+        fetch('/api/admin/users').then(r => r.json()).then(setUsers).catch(() => {});
+      }
 
       async function save() {
         const updated = {
@@ -2297,6 +2381,84 @@
               </div>
             </div>
 
+            {/* Administrator Mode */}
+            <div className="flex flex-col gap-3">
+              <span className="text-sm font-semibold text-gray-900">Administrator Mode</span>
+              <p className="text-xs text-gray-400">When enabled, users must log in. Only the admin can access Settings, Downloads, and manage cluster.</p>
+              <div className="flex items-center gap-4">
+                <button onClick={() => { if (settings?.adminMode) toggleAdminMode(); }}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${settings?.adminMode ? 'bg-indigo-500' : 'bg-gray-300 cursor-default'}`}>
+                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings?.adminMode ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                </button>
+                <span className="text-xs text-gray-600">{settings?.adminMode ? 'Enabled' : 'Disabled'}</span>
+              </div>
+              {!settings?.adminMode && (
+                <div className="flex items-center gap-3">
+                  <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)}
+                    placeholder="Set admin password..." className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[250px]" />
+                  <button onClick={toggleAdminMode} disabled={!adminPassword}
+                    className="px-4 py-2 bg-indigo-500 text-white text-xs font-semibold rounded-lg hover:bg-indigo-600 transition disabled:opacity-40">
+                    Enable
+                  </button>
+                </div>
+              )}
+              {adminToggleError && <span className="text-xs text-red-500">{adminToggleError}</span>}
+            </div>
+
+            {/* User Management (admin mode only) */}
+            {settings?.adminMode && (
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-semibold text-gray-900">Users</span>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Username</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Role</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500">Status</th>
+                        <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map(u => (
+                        <tr key={u.username} className="border-b border-gray-100 last:border-0">
+                          <td className="px-4 py-2.5 text-gray-900 font-medium">{u.username}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'}`}>{u.role}</span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs ${u.active ? 'text-emerald-600' : 'text-gray-400'}`}>{u.active ? 'Active' : 'Inactive'}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {u.username !== 'admin' && (
+                              <div className="flex items-center justify-end gap-2">
+                                <button onClick={() => toggleUserActive(u.username, u.active)}
+                                  className="text-[11px] text-gray-400 hover:text-gray-600">{u.active ? 'Deactivate' : 'Activate'}</button>
+                                <button onClick={() => deleteUserAccount(u.username)}
+                                  className="text-[11px] text-gray-400 hover:text-red-500">Delete</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Add user form */}
+                <div className="flex items-center gap-3">
+                  <input type="text" value={newUser.username} onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
+                    placeholder="Username" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[160px]" />
+                  <input type="password" value={newUser.password} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
+                    placeholder="Password" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[160px]" />
+                  <button onClick={addUserAccount} disabled={!newUser.username || !newUser.password}
+                    className="px-4 py-2 bg-exo text-gray-900 text-xs font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40">
+                    Add User
+                  </button>
+                </div>
+                {userError && <span className="text-xs text-red-500">{userError}</span>}
+              </div>
+            )}
+
             {/* Save */}
             <button onClick={save} disabled={saveStatus === 'saving'}
               className={`self-start px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 ${
@@ -2326,6 +2488,57 @@
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // LOGIN SCREEN
+    // ═══════════════════════════════════════════════════════════════════
+
+    function LoginScreen({ onLogin }) {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      async function handleLogin(e) {
+        e.preventDefault();
+        setError('');
+        setLoading(true);
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await res.json();
+          if (!res.ok) { setError(data.error || 'Login failed'); setLoading(false); return; }
+          onLogin(data);
+        } catch (e) { setError('Connection error'); setLoading(false); }
+      }
+
+      return (
+        <div className="h-screen flex items-center justify-center bg-gray-50">
+          <form onSubmit={handleLogin} className="bg-white border border-gray-200 rounded-2xl p-8 w-[380px] flex flex-col gap-5 shadow-sm">
+            <div className="flex flex-col items-center gap-2">
+              <img src="logo.png" alt="" className="w-10 h-10" />
+              <span className="text-xl font-bold text-gray-900">ExoScopy</span>
+              <span className="text-xs text-gray-400">Sign in to continue</span>
+            </div>
+            {error && <div className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+            <div className="flex flex-col gap-3">
+              <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+                placeholder="Username" autoFocus autoComplete="username"
+                className="px-3 py-2.5 border border-gray-200 rounded-lg text-sm outline-none focus:border-exo transition-colors" />
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                placeholder="Password" autoComplete="current-password"
+                className="px-3 py-2.5 border border-gray-200 rounded-lg text-sm outline-none focus:border-exo transition-colors" />
+            </div>
+            <button type="submit" disabled={loading || !username || !password}
+              className="px-4 py-2.5 bg-exo text-gray-900 text-sm font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40">
+              {loading ? 'Signing in...' : 'Sign in'}
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // APP — Router
     // ═══════════════════════════════════════════════════════════════════
 
@@ -2334,30 +2547,81 @@
       const [settings, setSettings] = useState(null);
       const [clusterStatus, setClusterStatus] = useState(null);
       const [showHelp, setShowHelp] = useState(false);
+      const [authState, setAuthState] = useState(null); // null=loading, {adminMode, user}
 
       function refreshSettings() {
         fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => {});
       }
 
+      // Check auth status on mount
       useEffect(() => {
-        refreshSettings();
-        // Fetch cluster status
-        const fetchStatus = () => {
-          fetch('/api/monitoring/status').then(r => r.json()).then(setClusterStatus).catch(() => {});
-        };
-        fetchStatus();
-        const interval = setInterval(fetchStatus, 15000);
-        return () => clearInterval(interval);
+        async function checkAuth() {
+          try {
+            const statusRes = await fetch('/api/auth/status');
+            const { adminMode } = await statusRes.json();
+            if (!adminMode) {
+              setAuthState({ adminMode: false, user: null });
+            } else {
+              // Try to restore session
+              const meRes = await fetch('/api/auth/me');
+              if (meRes.ok) {
+                const user = await meRes.json();
+                setAuthState({ adminMode: true, user });
+              } else {
+                setAuthState({ adminMode: true, user: null });
+              }
+            }
+          } catch (e) {
+            setAuthState({ adminMode: false, user: null });
+          }
+        }
+        checkAuth();
       }, []);
+
+      useEffect(() => {
+        if (authState && (authState.user || !authState.adminMode)) {
+          refreshSettings();
+          const fetchStatus = () => {
+            fetch('/api/monitoring/status').then(r => r.json()).then(setClusterStatus).catch(() => {});
+          };
+          fetchStatus();
+          const interval = setInterval(fetchStatus, 15000);
+          return () => clearInterval(interval);
+        }
+      }, [authState]);
+
+      async function handleLogout() {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        setAuthState({ adminMode: true, user: null });
+        setPage('Chat');
+      }
+
+      function handleLogin(user) {
+        setAuthState({ adminMode: true, user });
+      }
+
+      // Auth loading
+      if (!authState) return (
+        <div className="h-screen flex items-center justify-center bg-gray-50">
+          <span className="text-sm text-gray-400">Loading...</span>
+        </div>
+      );
+
+      // Login required
+      if (authState.adminMode && !authState.user) return <LoginScreen onLogin={handleLogin} />;
+
+      const userRole = authState.user?.role || null;
 
       return (
         <div className="h-screen flex flex-col">
-          <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus} showHelp={showHelp} setShowHelp={setShowHelp} />
+          <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus}
+            showHelp={showHelp} setShowHelp={setShowHelp}
+            user={authState.user} onLogout={handleLogout} />
           {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
           {page === 'Chat' && <ChatPage clusterStatus={clusterStatus} settings={settings} />}
           {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
-          {page === 'Downloads' && <DownloadsPage />}
-          {page === 'Settings' && <SettingsPage settings={settings} refreshSettings={refreshSettings} />}
+          {page === 'Downloads' && (!userRole || userRole === 'admin') && <DownloadsPage />}
+          {page === 'Settings' && (!userRole || userRole === 'admin') && <SettingsPage settings={settings} refreshSettings={refreshSettings} authState={authState} setAuthState={setAuthState} />}
         </div>
       );
     }
