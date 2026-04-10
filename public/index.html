@@ -315,7 +315,10 @@
 
     function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp, user, onLogout }) {
       const allPages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
-      const pages = user?.role === 'guest' ? ['Chat'] : user?.role === 'user' ? ['Chat', 'Dashboard'] : allPages;
+      const pages = user?.role === 'guest' ? ['Chat'] :
+                    user?.role === 'user' ? ['Chat'] :
+                    user?.role === 'organizer' ? ['Chat', 'Dashboard'] :
+                    allPages;
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
 
@@ -356,6 +359,7 @@
               <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
                 <span className="text-xs text-gray-500">{user.username}</span>
                 {user.role === 'admin' && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-medium">Admin</span>}
+                {user.role === 'organizer' && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-medium">Organizer</span>}
                 {user.role === 'guest' && user.tokenLimit && (
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                     (user.tokensUsed || 0) >= user.tokenLimit ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
@@ -1074,9 +1078,9 @@
                   </button>
                   <textarea ref={inputRef} value={input} onChange={e => { setInput(e.target.value); autoResize(); }}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                    placeholder="Type your message..." rows={1}
-                    style={{ minHeight: '40px', overflowY: 'hidden' }}
-                    className="flex-1 text-sm text-gray-900 outline-none resize-none placeholder-gray-400 bg-transparent" />
+                    placeholder="Type your message..." rows={2}
+                    style={{ minHeight: '56px', overflowY: 'hidden' }}
+                    className="flex-1 text-sm text-gray-900 outline-none resize-none placeholder-gray-400 bg-transparent leading-relaxed" />
                   <button onClick={() => setExpandedEditor(true)} className="text-gray-400 hover:text-gray-600 flex-shrink-0 pb-0.5" title="Expand editor">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
                   </button>
@@ -1128,7 +1132,7 @@
     // DASHBOARD PAGE
     // ═══════════════════════════════════════════════════════════════════
 
-    function DashboardPage({ clusterStatus }) {
+    function DashboardPage({ clusterStatus, userRole }) {
       // Models state
       const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
       const [chatModels, setChatModels] = useState([]);
@@ -1144,17 +1148,27 @@
       const [nodeMetrics, setNodeMetrics] = useState([]);
       const [ramData, setRamData] = useState([]);
 
+      const canManageModels = !userRole || userRole === 'admin' || userRole === 'organizer';
       const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
+
+      // Poll real model status from exo
+      function refreshExoStatus() {
+        fetch('/api/monitoring/exo-load-status').then(r => r.json()).then(d => {
+          if (d.status === 'idle') {
+            setLoadStatus(null);
+          } else {
+            setLoadStatus({ status: d.status, model: d.model, readyRunners: d.readyRunners, totalRunners: d.totalRunners, loadingTasks: d.loadingTasks });
+            if (d.model && !loadModel) setLoadModel(d.model);
+          }
+        }).catch(() => {});
+      }
 
       function refreshMatrix() {
         fetch('/api/models/matrix').then(r => r.json()).then(d => {
           setMatrixData(d);
-          if (d.activeModel && !loadModel) {
-            setLoadModel(d.activeModel);
-            setLoadStatus({ status: 'running', model: d.activeModel });
-          }
         }).catch(() => {});
         fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setChatModels(d.models || [])).catch(() => {});
+        refreshExoStatus();
       }
       function refreshSyncs() {
         fetch('/api/models/syncs').then(r => r.json()).then(setActiveSyncs).catch(() => {});
@@ -1164,6 +1178,14 @@
         fetch('/api/monitoring/exo-node-metrics').then(r => r.json()).then(d => setNodeMetrics(d.nodes || [])).catch(() => {});
         fetch('/api/monitoring/ram').then(r => r.json()).then(setRamData).catch(() => {});
       }
+
+      // Fast poll exo status when loading/warming (every 3s)
+      useEffect(() => {
+        if (loadStatus?.status === 'loading' || loadStatus?.status === 'warming') {
+          const fast = setInterval(refreshExoStatus, 3000);
+          return () => clearInterval(fast);
+        }
+      }, [loadStatus?.status]);
 
       useEffect(() => {
         refreshMatrix(); refreshSyncs(); refreshDashboard();
@@ -1189,8 +1211,13 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ modelId: loadModel, sharding, minNodes: onlineCount }),
           });
-          if (res.ok) setLoadStatus({ status: 'running', model: loadModel });
-          else { const d = await res.json(); setLoadStatus({ status: 'failed', model: loadModel, error: d.error }); }
+          if (res.ok) {
+            // Don't set to running — let the exo status poller detect the real state
+            setTimeout(refreshExoStatus, 2000);
+          } else {
+            const d = await res.json();
+            setLoadStatus({ status: 'failed', model: loadModel, error: d.error });
+          }
         } catch (e) { setLoadStatus({ status: 'failed', model: loadModel, error: e.message }); }
       }
 
@@ -1213,7 +1240,12 @@
       return (
         <div className="flex-1 flex flex-col overflow-y-auto">
           {/* Status bar: running model + load controls */}
-          <div className="flex items-center gap-3 mx-6 mt-4 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex-shrink-0">
+          <div className={`flex items-center gap-3 mx-6 mt-4 px-4 py-2.5 rounded-xl flex-shrink-0 ${
+            loadStatus?.status === 'running' ? 'bg-emerald-50 border border-emerald-200' :
+            loadStatus?.status === 'warming' ? 'bg-blue-50 border border-blue-200' :
+            loadStatus?.status === 'loading' ? 'bg-amber-50 border border-amber-200' :
+            'bg-gray-50 border border-gray-200'
+          }`}>
             {loadStatus?.status === 'running' ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -1221,36 +1253,49 @@
                 <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
                 <span className="text-xs text-gray-500">· Pipeline · RDMA</span>
               </>
+            ) : loadStatus?.status === 'warming' ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-[13px] font-semibold text-blue-600">Warming up...</span>
+                <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
+                {loadStatus.readyRunners > 0 && <span className="mono text-[10px] text-blue-400">{loadStatus.readyRunners}/{loadStatus.totalRunners} runners ready</span>}
+              </>
             ) : loadStatus?.status === 'loading' ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 <span className="text-[13px] font-semibold text-amber-600">Loading...</span>
                 <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
+                {loadStatus.loadingTasks > 0 && <span className="mono text-[10px] text-amber-400">{loadStatus.loadingTasks} tasks pending</span>}
               </>
             ) : (
               <span className="text-[13px] text-gray-500">No model loaded</span>
             )}
             <div className="flex-1" />
-            <select value={loadModel} onChange={e => {
-              setLoadModel(e.target.value);
-              if (e.target.value) {
-                fetch(`/api/chat/instance-preview?modelId=${encodeURIComponent(e.target.value)}`).then(r => r.json()).then(d => setModelPreview(d.previews?.[0] || null)).catch(() => setModelPreview(null));
-              } else { setModelPreview(null); }
-            }} className="mono text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 min-w-[280px]">
-              <option value="">Select a model...</option>
-              {chatModels.map(m => <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>)}
-            </select>
-            {modelPreview && (
-              <span className="mono text-[10px] text-gray-400">{modelPreview.storageGB} GB · {modelPreview.nLayers} layers · {modelPreview.nodeCount}n</span>
+            {canManageModels && (
+              <>
+                <select value={loadModel} onChange={e => {
+                  setLoadModel(e.target.value);
+                  if (e.target.value) {
+                    fetch(`/api/chat/instance-preview?modelId=${encodeURIComponent(e.target.value)}`).then(r => r.json()).then(d => setModelPreview(d.previews?.[0] || null)).catch(() => setModelPreview(null));
+                  } else { setModelPreview(null); }
+                }} className="mono text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 min-w-[280px]">
+                  <option value="">Select a model...</option>
+                  {chatModels.map(m => <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>)}
+                </select>
+                {modelPreview && (
+                  <span className="mono text-[10px] text-gray-400">{modelPreview.storageGB} GB · {modelPreview.nLayers} layers · {modelPreview.nodeCount}n</span>
+                )}
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
+                  <button onClick={() => setSharding('Pipeline')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
+                  <button onClick={() => setSharding('Tensor')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>
+                </div>
+                {loadStatus?.status === 'running' && (
+                  <button onClick={handleUnload} className="px-3 py-1 border border-red-200 rounded-lg text-[11px] text-red-600 hover:bg-red-50">Unload</button>
+                )}
+                <button onClick={handleLoad} disabled={loadStatus?.status === 'loading' || loadStatus?.status === 'warming'}
+                  className="px-4 py-1.5 bg-exo rounded-lg text-[11px] font-semibold text-gray-900 hover:brightness-95 disabled:opacity-40">Load</button>
+              </>
             )}
-            <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
-              <button onClick={() => setSharding('Pipeline')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
-              <button onClick={() => setSharding('Tensor')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>
-            </div>
-            {loadStatus?.status === 'running' && (
-              <button onClick={handleUnload} className="px-3 py-1 border border-red-200 rounded-lg text-[11px] text-red-600 hover:bg-red-50">Unload</button>
-            )}
-            <button onClick={handleLoad} className="px-4 py-1.5 bg-exo rounded-lg text-[11px] font-semibold text-gray-900 hover:brightness-95">Load</button>
           </div>
 
           {/* Two-column layout */}
@@ -2017,7 +2062,7 @@
       const [adminPassword, setAdminPassword] = useState('');
       const [adminToggleError, setAdminToggleError] = useState('');
       const [users, setUsers] = useState([]);
-      const [newUser, setNewUser] = useState({ username: '', password: '' });
+      const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
       const [userError, setUserError] = useState('');
       // Auth log
       const [authLog, setAuthLog] = useState([]);
@@ -2090,10 +2135,10 @@
         if (!newUser.username || !newUser.password) { setUserError('Username and password required'); return; }
         const res = await fetch('/api/admin/users', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: newUser.username, password: newUser.password, role: 'user' }),
+          body: JSON.stringify({ username: newUser.username, password: newUser.password, role: newUser.role || 'user' }),
         });
         if (!res.ok) { const d = await res.json(); setUserError(d.error); return; }
-        setNewUser({ username: '', password: '' });
+        setNewUser({ username: '', password: '', role: 'user' });
         fetch('/api/admin/users').then(r => r.json()).then(setUsers).catch(() => {});
       }
 
@@ -2315,7 +2360,7 @@
 
             {/* Config Check Results */}
             {configCheck && configCheck.nodes && (
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-gray-200 rounded-xl">
                 <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Config Check Results</span>
                   <button onClick={() => setConfigCheck(null)} className="text-[11px] text-gray-400 hover:text-gray-600">×</button>
@@ -2543,7 +2588,11 @@
                         <tr key={u.username} className="border-b border-gray-100 last:border-0">
                           <td className="px-4 py-2.5 text-gray-900 font-medium">{u.username}</td>
                           <td className="px-4 py-2.5">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'}`}>{u.role}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                              u.role === 'admin' ? 'bg-indigo-100 text-indigo-600' :
+                              u.role === 'organizer' ? 'bg-amber-100 text-amber-600' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>{u.role}</span>
                           </td>
                           <td className="px-4 py-2.5">
                             <span className={`text-xs ${u.active ? 'text-emerald-600' : 'text-gray-400'}`}>{u.active ? 'Active' : 'Inactive'}</span>
@@ -2551,6 +2600,17 @@
                           <td className="px-4 py-2.5 text-right">
                             {u.username !== 'admin' && (
                               <div className="flex items-center justify-end gap-2">
+                                <select value={u.role} onChange={async e => {
+                                  await fetch(`/api/admin/users/${u.username}`, {
+                                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ role: e.target.value }),
+                                  });
+                                  fetch('/api/admin/users').then(r => r.json()).then(setUsers).catch(() => {});
+                                }} className="text-[11px] px-1.5 py-0.5 border border-gray-200 rounded bg-white text-gray-600">
+                                  <option value="user">user</option>
+                                  <option value="organizer">organizer</option>
+                                  <option value="admin">admin</option>
+                                </select>
                                 <button onClick={() => toggleUserActive(u.username, u.active)}
                                   className="text-[11px] text-gray-400 hover:text-gray-600">{u.active ? 'Deactivate' : 'Activate'}</button>
                                 <button onClick={() => deleteUserAccount(u.username)}
@@ -2566,9 +2626,15 @@
                 {/* Add user form */}
                 <div className="flex items-center gap-3">
                   <input type="text" value={newUser.username} onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
-                    placeholder="Username" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[160px]" />
+                    placeholder="Username" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[140px]" />
                   <input type="password" value={newUser.password} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
-                    placeholder="Password" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[160px]" />
+                    placeholder="Password" className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-[140px]" />
+                  <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                    className="px-2 py-2 border border-gray-200 rounded-lg text-sm text-gray-600">
+                    <option value="user">user</option>
+                    <option value="organizer">organizer</option>
+                    <option value="admin">admin</option>
+                  </select>
                   <button onClick={addUserAccount} disabled={!newUser.username || !newUser.password}
                     className="px-4 py-2 bg-exo text-gray-900 text-xs font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40">
                     Add User
@@ -2775,7 +2841,7 @@
             user={authState.user} onLogout={handleLogout} />
           {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
           {page === 'Chat' && <ChatPage clusterStatus={clusterStatus} settings={settings} />}
-          {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} />}
+          {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} userRole={userRole} />}
           {page === 'Downloads' && (!userRole || userRole === 'admin') && <DownloadsPage />}
           {page === 'Settings' && (!userRole || userRole === 'admin') && <SettingsPage settings={settings} refreshSettings={refreshSettings} authState={authState} setAuthState={setAuthState} />}
         </div>

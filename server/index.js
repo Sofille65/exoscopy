@@ -503,8 +503,8 @@ app.post('/api/monitoring/stop', async (req, res) => {
   res.json({ results });
 });
 
-// POST /api/monitoring/purge — delete all EXO instances via DELETE /instance/:id
-app.post('/api/monitoring/purge', async (req, res) => {
+// POST /api/monitoring/purge — delete all EXO instances via DELETE /instance/:id (admin/organizer only)
+app.post('/api/monitoring/purge', requireRole('admin', 'organizer'), async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.json({ purged: 0, error: 'No EXO nodes configured' });
@@ -717,9 +717,66 @@ app.get('/api/monitoring/exo-models', async (req, res) => {
   }
 });
 
+// GET /api/monitoring/exo-load-status — poll exo /state for real model loading status
+app.get('/api/monitoring/exo-load-status', async (req, res) => {
+  const nodes = getExoNodes();
+  const firstNode = nodes[0];
+  if (!firstNode) return res.json({ status: 'idle', model: null });
+  const exoPort = getSettings().exoPort || 52415;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const r = await fetch(`http://${firstNode.ip}:${exoPort}/state`, { signal: controller.signal });
+    clearTimeout(timer);
+    const data = await r.json();
+
+    // Find active instance and model
+    let activeModel = null;
+    let instanceId = null;
+    for (const [iid, inst] of Object.entries(data.instances || {})) {
+      const inner = inst.MlxJacclInstance || inst.MlxRingInstance || inst.MlxInstance || Object.values(inst)[0];
+      const modelId = inner?.shardAssignments?.modelId;
+      if (modelId) { activeModel = modelId; instanceId = iid; break; }
+    }
+    if (!activeModel) return res.json({ status: 'idle', model: null });
+
+    // Count runners for this instance
+    const runners = data.runners || {};
+    let readyCount = 0;
+    let totalCount = 0;
+    for (const runner of Object.values(runners)) {
+      if (runner.RunnerReady) readyCount++;
+      if (!runner.RunnerShuttingDown) totalCount++;
+    }
+
+    // Check if there are still-running CreateRunner tasks for this instance
+    let loadingTasks = 0;
+    for (const task of Object.values(data.tasks || {})) {
+      const cr = task.CreateRunner;
+      if (cr && cr.instanceId === instanceId && cr.taskStatus === 'Running') loadingTasks++;
+    }
+
+    let status;
+    if (loadingTasks > 0) {
+      status = 'loading';
+    } else if (readyCount > 0 && readyCount >= totalCount) {
+      status = 'running';
+    } else if (readyCount > 0) {
+      status = 'warming';
+    } else {
+      status = 'loading';
+    }
+
+    res.json({ status, model: activeModel, instanceId, readyRunners: readyCount, totalRunners: totalCount, loadingTasks });
+  } catch (e) {
+    res.json({ status: 'idle', model: null });
+  }
+});
+
 // POST /api/monitoring/load — load a model on the EXO cluster via place_instance
 // body: { modelId, sharding?, minNodes? }
-app.post('/api/monitoring/load', async (req, res) => {
+app.post('/api/monitoring/load', requireRole('admin', 'organizer'), async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.status(400).json({ error: 'No EXO nodes configured' });
@@ -741,8 +798,8 @@ app.post('/api/monitoring/load', async (req, res) => {
   }
 });
 
-// DELETE /api/monitoring/instance/:instanceId — unload a specific EXO instance
-app.delete('/api/monitoring/instance/:instanceId', async (req, res) => {
+// DELETE /api/monitoring/instance/:instanceId — unload a specific EXO instance (admin/organizer only)
+app.delete('/api/monitoring/instance/:instanceId', requireRole('admin', 'organizer'), async (req, res) => {
   const nodes     = getExoNodes();
   const firstNode = nodes[0];
   if (!firstNode) return res.status(400).json({ error: 'No EXO nodes configured' });
