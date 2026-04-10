@@ -114,11 +114,12 @@ function authMiddleware(getSettings) {
       return next();
     }
     // Public routes — no auth required
-    const publicPaths = ['/api/auth/status', '/api/auth/login'];
+    const publicPaths = ['/api/auth/status', '/api/auth/login', '/api/auth/guest'];
     if (publicPaths.includes(req.path)) return next();
     // Static files
     if (!req.path.startsWith('/api/')) return next();
 
+    // Authenticated user
     if (req.session && req.session.username) {
       const user = getUser(req.session.username);
       if (user && user.active) {
@@ -126,6 +127,13 @@ function authMiddleware(getSettings) {
         return next();
       }
     }
+
+    // Guest session
+    if (req.session && req.session.guest && settings.guestMode) {
+      req.user = { username: 'guest', role: 'guest', tokensUsed: req.session.guestTokensUsed || 0 };
+      return next();
+    }
+
     return res.status(401).json({ error: 'Not authenticated' });
   };
 }

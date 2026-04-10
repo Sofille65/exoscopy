@@ -315,7 +315,7 @@
 
     function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp, user, onLogout }) {
       const allPages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
-      const pages = user?.role === 'user' ? ['Chat', 'Dashboard'] : allPages;
+      const pages = user?.role === 'guest' ? ['Chat'] : user?.role === 'user' ? ['Chat', 'Dashboard'] : allPages;
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
 
@@ -356,6 +356,11 @@
               <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
                 <span className="text-xs text-gray-500">{user.username}</span>
                 {user.role === 'admin' && <span className="text-[10px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-medium">Admin</span>}
+                {user.role === 'guest' && user.tokenLimit && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    (user.tokensUsed || 0) >= user.tokenLimit ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
+                  }`}>{((user.tokensUsed || 0) / 1000).toFixed(1)}k / {(user.tokenLimit / 1000).toFixed(0)}k tokens</span>
+                )}
                 <button onClick={onLogout} className="text-xs text-gray-400 hover:text-red-500 transition-colors">Logout</button>
               </div>
             )}
@@ -2405,6 +2410,37 @@
               {adminToggleError && <span className="text-xs text-red-500">{adminToggleError}</span>}
             </div>
 
+            {/* Guest Mode (admin mode only) */}
+            {settings?.adminMode && (
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-semibold text-gray-900">Guest Access</span>
+                <p className="text-xs text-gray-400">Allow unauthenticated users to chat with a token limit per session.</p>
+                <div className="flex items-center gap-4">
+                  <button onClick={async () => {
+                    await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ guestMode: !settings.guestMode }) });
+                    refreshSettings();
+                  }} className={`relative w-11 h-6 rounded-full transition-colors ${settings.guestMode ? 'bg-indigo-500' : 'bg-gray-300'}`}>
+                    <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings.guestMode ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                  </button>
+                  <span className="text-xs text-gray-600">{settings.guestMode ? 'Enabled' : 'Disabled'}</span>
+                  {settings.guestMode && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">Limit:</span>
+                      <input type="number" value={settings.guestTokenLimit || 50000}
+                        onChange={async e => {
+                          await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ guestTokenLimit: parseInt(e.target.value) || 50000 }) });
+                          refreshSettings();
+                        }}
+                        className="w-[100px] px-2 py-1 border border-gray-200 rounded text-xs text-center" />
+                      <span className="text-xs text-gray-400">tokens/session</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* User Management (admin mode only) */}
             {settings?.adminMode && (
               <div className="flex flex-col gap-3">
@@ -2491,7 +2527,7 @@
     // LOGIN SCREEN
     // ═══════════════════════════════════════════════════════════════════
 
-    function LoginScreen({ onLogin }) {
+    function LoginScreen({ onLogin, guestMode }) {
       const [username, setUsername] = useState('');
       const [password, setPassword] = useState('');
       const [error, setError] = useState('');
@@ -2508,6 +2544,17 @@
           });
           const data = await res.json();
           if (!res.ok) { setError(data.error || 'Login failed'); setLoading(false); return; }
+          onLogin(data);
+        } catch (e) { setError('Connection error'); setLoading(false); }
+      }
+
+      async function handleGuest() {
+        setError('');
+        setLoading(true);
+        try {
+          const res = await fetch('/api/auth/guest', { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) { setError(data.error || 'Guest access failed'); setLoading(false); return; }
           onLogin(data);
         } catch (e) { setError('Connection error'); setLoading(false); }
       }
@@ -2533,6 +2580,12 @@
               className="px-4 py-2.5 bg-exo text-gray-900 text-sm font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40">
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
+            {guestMode && (
+              <button type="button" onClick={handleGuest} disabled={loading}
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition disabled:opacity-40">
+                Continue as Guest
+              </button>
+            )}
           </form>
         </div>
       );
@@ -2558,17 +2611,17 @@
         async function checkAuth() {
           try {
             const statusRes = await fetch('/api/auth/status');
-            const { adminMode } = await statusRes.json();
+            const { adminMode, guestMode } = await statusRes.json();
             if (!adminMode) {
-              setAuthState({ adminMode: false, user: null });
+              setAuthState({ adminMode: false, guestMode: false, user: null });
             } else {
               // Try to restore session
               const meRes = await fetch('/api/auth/me');
               if (meRes.ok) {
                 const user = await meRes.json();
-                setAuthState({ adminMode: true, user });
+                setAuthState({ adminMode: true, guestMode, user });
               } else {
-                setAuthState({ adminMode: true, user: null });
+                setAuthState({ adminMode: true, guestMode, user: null });
               }
             }
           } catch (e) {
@@ -2597,8 +2650,20 @@
       }
 
       function handleLogin(user) {
-        setAuthState({ adminMode: true, user });
+        setAuthState(prev => ({ ...prev, adminMode: true, user }));
       }
+
+      // Refresh guest token count periodically
+      useEffect(() => {
+        if (authState?.user?.role !== 'guest') return;
+        const refresh = () => {
+          fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(user => {
+            if (user) setAuthState(prev => ({ ...prev, user }));
+          }).catch(() => {});
+        };
+        const interval = setInterval(refresh, 10000);
+        return () => clearInterval(interval);
+      }, [authState?.user?.role]);
 
       // Auth loading
       if (!authState) return (
@@ -2608,7 +2673,7 @@
       );
 
       // Login required
-      if (authState.adminMode && !authState.user) return <LoginScreen onLogin={handleLogin} />;
+      if (authState.adminMode && !authState.user) return <LoginScreen onLogin={handleLogin} guestMode={authState.guestMode} />;
 
       const userRole = authState.user?.role || null;
 

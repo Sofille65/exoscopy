@@ -139,7 +139,7 @@ app.put('/api/settings', (req, res) => {
 // GET /api/auth/status — public, returns whether admin mode is active
 app.get('/api/auth/status', (req, res) => {
   const settings = getSettings();
-  res.json({ adminMode: !!settings.adminMode });
+  res.json({ adminMode: !!settings.adminMode, guestMode: !!(settings.adminMode && settings.guestMode) });
 });
 
 // POST /api/auth/login — public, authenticate user
@@ -161,10 +161,27 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/auth/guest — start a guest session
+app.post('/api/auth/guest', (req, res) => {
+  const settings = getSettings();
+  if (!settings.adminMode || !settings.guestMode) {
+    return res.status(403).json({ error: 'Guest mode not available' });
+  }
+  req.session.guest = true;
+  req.session.guestTokensUsed = 0;
+  res.json({ username: 'guest', role: 'guest', tokensUsed: 0, tokenLimit: settings.guestTokenLimit });
+});
+
 // GET /api/auth/me — returns current user info
 app.get('/api/auth/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-  res.json({ username: req.user.username, role: req.user.role });
+  const result = { username: req.user.username, role: req.user.role };
+  if (req.user.role === 'guest') {
+    const settings = getSettings();
+    result.tokensUsed = req.session.guestTokensUsed || 0;
+    result.tokenLimit = settings.guestTokenLimit;
+  }
+  res.json(result);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1367,6 +1384,15 @@ app.post('/api/chat/completions', async (req, res) => {
     conversationId,
   } = req.body;
 
+  // Guest token limit check
+  if (req.user?.role === 'guest') {
+    const settings = getSettings();
+    const used = req.session.guestTokensUsed || 0;
+    if (used >= settings.guestTokenLimit) {
+      return res.status(429).json({ error: 'Guest token limit reached. Please log in to continue.' });
+    }
+  }
+
   const eng = getChatEndpoint(engine || 'exo1');
   if (!eng) return res.status(400).json({ error: `Unknown engine: ${engine}` });
 
@@ -1469,17 +1495,21 @@ app.post('/api/chat/completions', async (req, res) => {
               try { res.write(chunk); } catch (e) { clientConnected = false; }
             }
 
-            if (conversationId) {
-              for (const line of chunk.split('\n')) {
-                if (!line.startsWith('data: ')) continue;
-                const data = line.slice(6).trim();
-                if (data === '[DONE]') continue;
-                try {
-                  const parsed = JSON.parse(data);
-                  const delta  = parsed.choices?.[0]?.delta?.content;
+            for (const line of chunk.split('\n')) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                if (conversationId) {
+                  const delta = parsed.choices?.[0]?.delta?.content;
                   if (delta) appendInferenceContent(conversationId, delta);
-                } catch (e) { /* not JSON */ }
-              }
+                }
+                // Track guest tokens from usage field in final chunk
+                if (req.user?.role === 'guest' && parsed.usage?.total_tokens) {
+                  req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + parsed.usage.total_tokens;
+                }
+              } catch (e) { /* not JSON */ }
             }
           }
         } catch (e) {
@@ -1496,6 +1526,10 @@ app.post('/api/chat/completions', async (req, res) => {
       if (conversationId && data.choices?.[0]?.message?.content) {
         convStore.addMessage(conversationId, 'assistant', data.choices[0].message.content);
         finishInference(conversationId, convStore.addMessage);
+      }
+      // Track guest tokens
+      if (req.user?.role === 'guest' && data.usage?.total_tokens) {
+        req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + data.usage.total_tokens;
       }
       res.json(data);
     }
