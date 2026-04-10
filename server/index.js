@@ -1933,6 +1933,7 @@ app.post('/api/models/sync', requireRole('admin'), async (req, res) => {
     id: syncId, modelId, sourceNode, targetNodes,
     status: 'syncing', startedAt: new Date().toISOString(),
     progress: {},
+    _children: [], // track child processes for cancel
   };
 
   res.json({ syncId, status: 'started' });
@@ -1955,6 +1956,7 @@ app.post('/api/models/sync', requireRole('admin'), async (req, res) => {
     console.log(`[sync] ${modelId}: ${source.ip} → ${target.ip}`);
 
     const child = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+    activeSyncs[syncId]._children.push(child);
 
     child.stdout.on('data', (buf) => {
       const lines = buf.toString().split('\n');
@@ -1963,16 +1965,21 @@ app.post('/api/models/sync', requireRole('admin'), async (req, res) => {
         const match = line.match(/(\d+)%/);
         if (match) {
           const percent = parseInt(match[1]);
-          activeSyncs[syncId].progress[targetName].percent = percent;
+          if (activeSyncs[syncId]) {
+            activeSyncs[syncId].progress[targetName].percent = percent;
+          }
           io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'syncing', percent });
         }
       }
     });
 
     child.on('close', (code) => {
+      if (!activeSyncs[syncId]) return; // cancelled
       if (code === 0) {
         activeSyncs[syncId].progress[targetName] = { status: 'done', percent: 100 };
         io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'done', percent: 100 });
+      } else if (activeSyncs[syncId].status === 'cancelled') {
+        // Already handled by cancel endpoint
       } else {
         activeSyncs[syncId].progress[targetName] = { status: 'error', error: `rsync exit ${code}` };
         io.emit('sync:progress', { syncId, modelId, node: targetName, status: 'error' });
@@ -1980,11 +1987,12 @@ app.post('/api/models/sync', requireRole('admin'), async (req, res) => {
 
       // Check if all targets done
       const allDone = targetNodes.every(n => {
-        const p = activeSyncs[syncId].progress[n];
-        return p && (p.status === 'done' || p.status === 'error');
+        const p = activeSyncs[syncId]?.progress[n];
+        return p && (p.status === 'done' || p.status === 'error' || p.status === 'cancelled');
       });
-      if (allDone) {
+      if (allDone && activeSyncs[syncId]) {
         activeSyncs[syncId].status = 'done';
+        delete activeSyncs[syncId]._children;
         io.emit('sync:complete', { syncId, modelId });
       }
     });
@@ -2019,7 +2027,39 @@ app.post('/api/models/delete', requireRole('admin'), async (req, res) => {
 
 // GET /api/models/syncs — list active syncs
 app.get('/api/models/syncs', (req, res) => {
-  res.json(Object.values(activeSyncs));
+  const clean = Object.values(activeSyncs).map(s => {
+    const { _children, ...rest } = s;
+    return rest;
+  });
+  res.json(clean);
+});
+
+// DELETE /api/models/syncs/:syncId — cancel/kill a running sync
+app.delete('/api/models/syncs/:syncId', requireRole('admin'), (req, res) => {
+  const sync = activeSyncs[req.params.syncId];
+  if (!sync) return res.status(404).json({ error: 'Sync not found' });
+
+  console.log(`[sync] Cancelling ${sync.id} (${sync.modelId})`);
+  sync.status = 'cancelled';
+
+  // Kill all child processes
+  if (sync._children) {
+    for (const child of sync._children) {
+      try { child.kill('SIGTERM'); } catch (e) {}
+    }
+  }
+
+  // Mark all in-progress targets as cancelled
+  for (const [node, p] of Object.entries(sync.progress)) {
+    if (p.status === 'syncing') {
+      sync.progress[node] = { status: 'cancelled' };
+      io.emit('sync:progress', { syncId: sync.id, modelId: sync.modelId, node, status: 'cancelled' });
+    }
+  }
+
+  delete activeSyncs[req.params.syncId];
+  io.emit('sync:complete', { syncId: sync.id, modelId: sync.modelId, cancelled: true });
+  res.json({ ok: true });
 });
 
 // POST /api/models/import — import a model from an external source via rsync
