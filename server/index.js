@@ -1308,6 +1308,57 @@ app.delete('/api/projects/:id', (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TTS API (proxies to Kokoro / OpenAI-compatible TTS endpoint)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/tts/voices — list available voices
+app.get('/api/tts/voices', async (req, res) => {
+  const settings = getSettings();
+  if (!settings.tts?.enabled || !settings.tts?.endpoint) {
+    return res.status(400).json({ error: 'TTS not configured' });
+  }
+  try {
+    const r = await fetch(`${settings.tts.endpoint}/v1/audio/voices`);
+    if (!r.ok) throw new Error(`TTS endpoint returned ${r.status}`);
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: `TTS voices fetch failed: ${e.message}` });
+  }
+});
+
+// POST /api/tts/speech — generate speech audio
+app.post('/api/tts/speech', async (req, res) => {
+  const settings = getSettings();
+  if (!settings.tts?.enabled || !settings.tts?.endpoint) {
+    return res.status(400).json({ error: 'TTS not configured' });
+  }
+  const { input, voice, response_format } = req.body;
+  if (!input) return res.status(400).json({ error: 'input is required' });
+  try {
+    const r = await fetch(`${settings.tts.endpoint}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input,
+        model: settings.tts.model || 'kokoro',
+        voice: voice || settings.tts.voice || 'ff_siwis',
+        response_format: response_format || 'mp3',
+      }),
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      throw new Error(`TTS returned ${r.status}: ${errText}`);
+    }
+    res.set('Content-Type', r.headers.get('content-type') || 'audio/mpeg');
+    const buffer = Buffer.from(await r.arrayBuffer());
+    res.send(buffer);
+  } catch (e) {
+    res.status(502).json({ error: `TTS speech failed: ${e.message}` });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CONVERSATIONS API
 // ─────────────────────────────────────────────────────────────────────────────
 
