@@ -66,14 +66,15 @@
     // ═══════════════════════════════════════════════════════════════════
 
     const StreamManager = {
-      _streams: new Map(), // convId → { content, done, error, stats, controller, listeners, startTime, firstTokenTime, chunkCount, promptTokens, completionTokens }
+      _streams: new Map(), // convId → { content, done, error, stats, controller, startTime, firstTokenTime, chunkCount, promptTokens, completionTokens }
+      _listeners: new Map(), // convId → Set<fn> — persistent, survives stream lifecycle
       _globalListeners: new Set(), // notified on any stream start/stop (for badges)
 
       startStream(convId, body) {
         const controller = new AbortController();
         const entry = {
           content: '', done: false, error: null, stats: null,
-          controller, listeners: new Set(),
+          controller,
           startTime: Date.now(), firstTokenTime: null,
           chunkCount: 0, promptTokens: 0, completionTokens: 0,
         };
@@ -156,23 +157,23 @@
       },
 
       subscribe(convId, fn) {
+        if (!this._listeners.has(convId)) this._listeners.set(convId, new Set());
+        this._listeners.get(convId).add(fn);
+        // Immediately deliver current state to catch up
         const entry = this._streams.get(convId);
-        if (entry) {
-          entry.listeners.add(fn);
-          // Immediately deliver current state to catch up
-          if (entry.content) fn(entry);
-        }
+        if (entry && entry.content) fn(entry);
       },
       unsubscribe(convId, fn) {
-        const entry = this._streams.get(convId);
-        if (entry) entry.listeners.delete(fn);
+        const subs = this._listeners.get(convId);
+        if (subs) { subs.delete(fn); if (subs.size === 0) this._listeners.delete(convId); }
       },
       onGlobal(fn) { this._globalListeners.add(fn); },
       offGlobal(fn) { this._globalListeners.delete(fn); },
 
       _notify(convId) {
         const entry = this._streams.get(convId);
-        if (entry) entry.listeners.forEach(fn => fn(entry));
+        const subs = this._listeners.get(convId);
+        if (entry && subs) subs.forEach(fn => fn(entry));
       },
       _notifyGlobal() {
         const ids = this.getActiveIds();
