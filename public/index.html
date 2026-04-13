@@ -62,6 +62,130 @@
     const socket = io();
 
     // ═══════════════════════════════════════════════════════════════════
+    // STREAM MANAGER — persists across page/conversation switches
+    // ═══════════════════════════════════════════════════════════════════
+
+    const StreamManager = {
+      _streams: new Map(), // convId → { content, done, error, stats, controller, listeners, startTime, firstTokenTime, chunkCount, promptTokens, completionTokens }
+      _globalListeners: new Set(), // notified on any stream start/stop (for badges)
+
+      startStream(convId, body) {
+        const controller = new AbortController();
+        const entry = {
+          content: '', done: false, error: null, stats: null,
+          controller, listeners: new Set(),
+          startTime: Date.now(), firstTokenTime: null,
+          chunkCount: 0, promptTokens: 0, completionTokens: 0,
+        };
+        this._streams.set(convId, entry);
+        this._notifyGlobal();
+        this._pump(convId, body, entry);
+        return controller;
+      },
+
+      async _pump(convId, body, entry) {
+        try {
+          const res = await fetch('/api/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body), signal: entry.controller.signal,
+          });
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            for (const line of chunk.split('\n')) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta;
+                const textContent = delta?.content;
+                const thinkContent = delta?.reasoning_content;
+                if (textContent || thinkContent) {
+                  if (!entry.firstTokenTime) entry.firstTokenTime = Date.now();
+                  if (thinkContent) {
+                    if (!entry.content.includes('<think>')) entry.content += '<think>';
+                    entry.content += thinkContent;
+                  } else if (textContent) {
+                    if (entry.content.includes('<think>') && !entry.content.includes('</think>')) entry.content += '</think>';
+                    entry.content += textContent;
+                  }
+                  entry.chunkCount++;
+                  if (parsed.usage) {
+                    if (parsed.usage.completion_tokens) entry.completionTokens = parsed.usage.completion_tokens;
+                    if (parsed.usage.prompt_tokens) entry.promptTokens = parsed.usage.prompt_tokens;
+                  }
+                  this._notify(convId);
+                }
+              } catch (e) {}
+            }
+          }
+          // Stream complete — calculate stats
+          const totalTime = (Date.now() - entry.startTime) / 1000;
+          const ttft = entry.firstTokenTime ? (entry.firstTokenTime - entry.startTime) / 1000 : null;
+          const genTime = entry.firstTokenTime ? (Date.now() - entry.firstTokenTime) / 1000 : totalTime;
+          const speed = genTime > 0 && entry.chunkCount > 0 ? entry.chunkCount / genTime : 0;
+          entry.stats = { ttft, speed, totalTime, genTime, promptTokens: entry.promptTokens, completionTokens: entry.completionTokens || entry.chunkCount, chunks: entry.chunkCount, chunkRate: speed };
+          entry.done = true;
+          this._notify(convId);
+          this._notifyGlobal();
+        } catch (e) {
+          entry.done = true;
+          if (e.name !== 'AbortError') entry.error = e.message;
+          this._notify(convId);
+          this._notifyGlobal();
+        }
+      },
+
+      stop(convId) {
+        const entry = this._streams.get(convId);
+        if (entry && !entry.done) {
+          entry.controller.abort();
+          entry.done = true;
+          this._notify(convId);
+          this._notifyGlobal();
+        }
+      },
+
+      subscribe(convId, fn) {
+        const entry = this._streams.get(convId);
+        if (entry) {
+          entry.listeners.add(fn);
+          // Immediately deliver current state to catch up
+          if (entry.content) fn(entry);
+        }
+      },
+      unsubscribe(convId, fn) {
+        const entry = this._streams.get(convId);
+        if (entry) entry.listeners.delete(fn);
+      },
+      onGlobal(fn) { this._globalListeners.add(fn); },
+      offGlobal(fn) { this._globalListeners.delete(fn); },
+
+      _notify(convId) {
+        const entry = this._streams.get(convId);
+        if (entry) entry.listeners.forEach(fn => fn(entry));
+      },
+      _notifyGlobal() {
+        const ids = this.getActiveIds();
+        this._globalListeners.forEach(fn => fn(ids));
+      },
+
+      get(convId) { return this._streams.get(convId) || null; },
+      isActive(convId) { const e = this._streams.get(convId); return e && !e.done; },
+      getActiveIds() {
+        const ids = [];
+        this._streams.forEach((e, id) => { if (!e.done) ids.push(id); });
+        return ids;
+      },
+      cleanup(convId) { this._streams.delete(convId); },
+    };
+
+    // ═══════════════════════════════════════════════════════════════════
     // UTILITIES
     // ═══════════════════════════════════════════════════════════════════
 
@@ -313,7 +437,7 @@
       );
     }
 
-    function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp, user, onLogout }) {
+    function NavBar({ page, setPage, version, clusterStatus, showHelp, setShowHelp, user, onLogout, activeStreamCount }) {
       const allPages = ['Chat', 'Dashboard', 'Downloads', 'Settings'];
       const pages = user?.role === 'guest' ? ['Chat'] :
                     user?.role === 'user' ? ['Chat'] :
@@ -332,10 +456,13 @@
           <div className="flex items-center gap-1">
             {pages.map(p => (
               <button key={p} onClick={() => setPage(p)}
-                className={`px-3.5 py-1.5 text-[13px] rounded-md transition-colors ${
+                className={`relative px-3.5 py-1.5 text-[13px] rounded-md transition-colors ${
                   page === p ? 'font-semibold text-indigo-500 bg-indigo-50' : 'font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}>
                 {p}
+                {p === 'Chat' && activeStreamCount > 0 && page !== 'Chat' && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
+                )}
               </button>
             ))}
           </div>
@@ -411,7 +538,6 @@
       const messagesEndRef = useRef(null);
       const inputRef = useRef(null);
       const fileInputRef = useRef(null);
-      const abortRef = useRef(null);
       const [expandedEditor, setExpandedEditor] = useState(false);
 
       // Auto-resize textarea
@@ -464,10 +590,98 @@
 
       // Load conversation messages when active changes
       useEffect(() => {
-        if (!activeConvId) { setMessages([]); return; }
-        fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d => {
-          setMessages(d.messages || []);
-        }).catch(() => {});
+        if (!activeConvId) { setMessages([]); setStreaming(false); return; }
+        // Reset streaming state — will be set to true if this conv has an active stream
+        setStreaming(false);
+        const stream = StreamManager.get(activeConvId);
+        if (stream && !stream.done) {
+          // Active stream — fetch saved messages from server, then append live content
+          fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d => {
+            const saved = d.messages || [];
+            setMessages([...saved, { role: 'assistant', content: stream.content, timestamp: new Date().toISOString() }]);
+            setStreaming(true);
+          }).catch(() => {});
+        } else if (stream && stream.done) {
+          // Stream finished while we were away — reload from server (message already persisted)
+          StreamManager.cleanup(activeConvId);
+          fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d => {
+            setMessages(d.messages || []);
+          }).catch(() => {});
+        } else {
+          // No active stream — check server for background inference (e.g. after page refresh)
+          fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d => {
+            setMessages(d.messages || []);
+            if (d.inference?.active) {
+              // Server is still streaming (e.g. we refreshed mid-stream) — poll for updates
+              setStreaming(true);
+              const poll = setInterval(() => {
+                fetch(`/api/conversations/${activeConvId}/inference`).then(r => r.json()).then(inf => {
+                  if (inf.active) {
+                    setMessages(prev => {
+                      const updated = [...prev];
+                      if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
+                        updated[updated.length - 1] = { ...updated[updated.length - 1], content: inf.content };
+                      } else {
+                        updated.push({ role: 'assistant', content: inf.content, timestamp: new Date().toISOString() });
+                      }
+                      return updated;
+                    });
+                  } else {
+                    clearInterval(poll);
+                    setStreaming(false);
+                    // Reload final messages from server
+                    fetch(`/api/conversations/${activeConvId}`).then(r => r.json()).then(d2 => {
+                      setMessages(d2.messages || []);
+                    }).catch(() => {});
+                    fetch(`/api/conversations/${activeConvId}/inference/clear`, { method: 'POST' }).catch(() => {});
+                  }
+                }).catch(() => { clearInterval(poll); setStreaming(false); });
+              }, 500);
+              return () => clearInterval(poll);
+            }
+          }).catch(() => {});
+        }
+      }, [activeConvId]);
+
+      // Subscribe to StreamManager for real-time updates on active conversation
+      useEffect(() => {
+        if (!activeConvId) return;
+        const handler = (entry) => {
+          setMessages(prev => {
+            const updated = [...prev];
+            // Update last assistant message with accumulated content
+            if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
+              updated[updated.length - 1] = { ...updated[updated.length - 1], content: entry.content };
+            }
+            return updated;
+          });
+          if (entry.done) {
+            // Store stats
+            if (entry.stats) {
+              setMessages(prev => {
+                const msgIdx = prev.length - 1;
+                if (activeConvId) statsMapRef.current[`${activeConvId}-${msgIdx}`] = entry.stats;
+                return prev;
+              });
+            }
+            if (entry.error) {
+              setMessages(prev => {
+                const updated = [...prev];
+                if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
+                  updated[updated.length - 1] = { ...updated[updated.length - 1], content: entry.content || `Error: ${entry.error}` };
+                }
+                return updated;
+              });
+            }
+            setStreaming(false);
+            // Refresh conversation list
+            fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
+            // Clean up after a short delay (let stats render)
+            setTimeout(() => StreamManager.cleanup(activeConvId), 2000);
+          }
+        };
+        StreamManager.subscribe(activeConvId, handler);
+        return () => StreamManager.unsubscribe(activeConvId, handler);
       }, [activeConvId]);
 
       // Auto-scroll
@@ -548,7 +762,9 @@
       const [chatWarning, setChatWarning] = useState(null);
 
       async function handleSend() {
-        if ((!input.trim() && !attachedFiles.length) || streaming) return;
+        if (!input.trim() && !attachedFiles.length) return;
+        // Block if this specific conversation is already streaming
+        if (activeConvId && StreamManager.isActive(activeConvId)) return;
         if (!selectedModel) {
           setChatWarning('No model selected. Please select a model from the dropdown.');
           setTimeout(() => setChatWarning(null), 5000);
@@ -608,109 +824,30 @@
         }
         apiMessages.push(...allMessages.map(m => ({ role: m.role, content: m.content })));
 
+        // Build request body
+        const body = {
+          engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
+          conversationId: convId,
+          temperature: params.temperature, max_tokens: params.maxTokens,
+        };
+        if (params.thinking) { body.thinking = true; body.enable_thinking = true; }
+        else { body.enable_thinking = false; }
+        if (params.thinking && params.reasoningEffort) body.reasoning_effort = params.reasoningEffort;
+        if (params.topP != null) body.top_p = params.topP;
+        if (params.topK != null) body.top_k = params.topK;
+        if (params.minP != null) body.min_p = params.minP;
+        if (params.repPenalty != null) { body.repetition_penalty = params.repPenalty; body.repetition_context_size = 256; }
+        if (params.seed != null) body.seed = params.seed;
+
+        // Add placeholder assistant message and start streaming via StreamManager
+        setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString() }]);
         setStreaming(true);
-        const assistantMsg = { role: 'assistant', content: '', timestamp: new Date().toISOString() };
-        setMessages(prev => [...prev, assistantMsg]);
-        const streamStartTime = Date.now();
-        let firstTokenTime = null;
-        let tokenCount = 0;
-        let chunkCount = 0;
-        let promptTokens = 0;
-        let completionTokens = 0;
-
-        try {
-          const body = {
-            engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
-            conversationId: convId,
-            temperature: params.temperature, max_tokens: params.maxTokens,
-          };
-          if (params.thinking) { body.thinking = true; body.enable_thinking = true; }
-          else { body.enable_thinking = false; }
-          if (params.thinking && params.reasoningEffort) body.reasoning_effort = params.reasoningEffort;
-          if (params.topP != null) body.top_p = params.topP;
-          if (params.topK != null) body.top_k = params.topK;
-          if (params.minP != null) body.min_p = params.minP;
-          if (params.repPenalty != null) { body.repetition_penalty = params.repPenalty; body.repetition_context_size = 256; }
-          if (params.seed != null) body.seed = params.seed;
-
-          const controller = new AbortController();
-          abortRef.current = controller;
-          const res = await fetch('/api/chat/completions', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body), signal: controller.signal,
-          });
-
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let accumulated = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            for (const line of chunk.split('\n')) {
-              if (!line.startsWith('data: ')) continue;
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(data);
-                const delta = parsed.choices?.[0]?.delta;
-                const textContent = delta?.content;
-                const thinkContent = delta?.reasoning_content;
-                if (textContent || thinkContent) {
-                  if (!firstTokenTime) firstTokenTime = Date.now();
-                  if (thinkContent) {
-                    if (!accumulated.includes('<think>')) accumulated += '<think>';
-                    accumulated += thinkContent;
-                  } else if (textContent) {
-                    if (accumulated.includes('<think>') && !accumulated.includes('</think>')) accumulated += '</think>';
-                    accumulated += textContent;
-                  }
-                  chunkCount++;
-                  if (parsed.usage) {
-                    if (parsed.usage.completion_tokens) completionTokens = parsed.usage.completion_tokens;
-                    if (parsed.usage.prompt_tokens) promptTokens = parsed.usage.prompt_tokens;
-                  }
-                  setMessages(prev => {
-                    const updated = [...prev];
-                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: accumulated };
-                    return updated;
-                  });
-                }
-              } catch (e) {}
-            }
-          }
-        } catch (e) {
-          if (e.name !== 'AbortError') {
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { ...updated[updated.length - 1], content: `Error: ${e.message}` };
-              return updated;
-            });
-          }
-        }
-        // Calculate final stats and store by convId + message index
-        const totalTime = (Date.now() - streamStartTime) / 1000;
-        const ttft = firstTokenTime ? (firstTokenTime - streamStartTime) / 1000 : null;
-        const genTime = firstTokenTime ? (Date.now() - firstTokenTime) / 1000 : totalTime;
-        const speed = genTime > 0 && chunkCount > 0 ? (chunkCount / genTime) : 0;
-        const chunkRate = genTime > 0 ? (chunkCount / genTime) : 0;
-        const stats = { ttft, speed, totalTime, genTime, promptTokens, completionTokens: completionTokens || chunkCount, chunks: chunkCount, chunkRate };
-        setMessages(prev => {
-          const msgIdx = prev.length - 1;
-          if (convId) statsMapRef.current[`${convId}-${msgIdx}`] = stats;
-          return prev;
-        });
-        setStreaming(false);
-        abortRef.current = null;
-        // Refresh conversation list (but don't reload current messages — keep stats)
-        fetch('/api/conversations').then(r => r.json()).then(list => {
-          setConversations(list);
-        }).catch(() => {});
+        StreamManager.startStream(convId, body);
+        // Subscription handles real-time updates (see useEffect below)
       }
 
       function stopStreaming() {
-        if (abortRef.current) abortRef.current.abort();
+        if (activeConvId) StreamManager.stop(activeConvId);
         setStreaming(false);
       }
 
@@ -752,8 +889,9 @@
                         className="text-[13px] font-medium text-gray-900 bg-white border border-exo rounded px-1 py-0 outline-none w-full" />
                     ) : (
                       <span onDoubleClick={e => { e.stopPropagation(); setRenamingId(c.id); setRenameValue(c.title || ''); }}
-                        className={`text-[13px] truncate max-w-[150px] ${activeConvId === c.id ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
-                        {c.pinned && <span className="text-[10px] text-gray-400 mr-1">📌</span>}
+                        className={`text-[13px] truncate max-w-[150px] flex items-center gap-1 ${activeConvId === c.id ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'}`}>
+                        {c.pinned && <span className="text-[10px] text-gray-400 mr-0.5">📌</span>}
+                        {StreamManager.isActive(c.id) && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />}
                         {c.title || 'New conversation'}
                       </span>
                     )}
@@ -2797,6 +2935,14 @@
       const [clusterStatus, setClusterStatus] = useState(null);
       const [showHelp, setShowHelp] = useState(false);
       const [authState, setAuthState] = useState(null); // null=loading, {adminMode, user}
+      const [activeStreamCount, setActiveStreamCount] = useState(0);
+
+      // Track active streams globally for NavBar badge
+      useEffect(() => {
+        const handler = (ids) => setActiveStreamCount(ids.length);
+        StreamManager.onGlobal(handler);
+        return () => StreamManager.offGlobal(handler);
+      }, []);
 
       function refreshSettings() {
         fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => {});
@@ -2877,7 +3023,7 @@
         <div className="h-screen flex flex-col">
           <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus}
             showHelp={showHelp} setShowHelp={setShowHelp}
-            user={authState.user} onLogout={handleLogout} />
+            user={authState.user} onLogout={handleLogout} activeStreamCount={activeStreamCount} />
           {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
           {page === 'Chat' && <ChatPage clusterStatus={clusterStatus} settings={settings} userRole={userRole} />}
           {page === 'Dashboard' && <DashboardPage clusterStatus={clusterStatus} userRole={userRole} />}

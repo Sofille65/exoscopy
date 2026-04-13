@@ -1586,8 +1586,22 @@ app.post('/api/chat/completions', async (req, res) => {
               try {
                 const parsed = JSON.parse(data);
                 if (conversationId) {
-                  const delta = parsed.choices?.[0]?.delta?.content;
-                  if (delta) appendInferenceContent(conversationId, delta);
+                  const delta = parsed.choices?.[0]?.delta;
+                  const text = delta?.content;
+                  const think = delta?.reasoning_content;
+                  if (think) {
+                    const inf = getInferenceStatus(conversationId);
+                    if (inf.active && !inf.content?.includes('<think>')) {
+                      appendInferenceContent(conversationId, '<think>');
+                    }
+                    appendInferenceContent(conversationId, think);
+                  } else if (text) {
+                    const inf = getInferenceStatus(conversationId);
+                    if (inf.active && inf.content?.includes('<think>') && !inf.content?.includes('</think>')) {
+                      appendInferenceContent(conversationId, '</think>');
+                    }
+                    appendInferenceContent(conversationId, text);
+                  }
                 }
                 // Track guest tokens from usage field in final chunk
                 if (req.user?.role === 'guest' && parsed.usage?.total_tokens) {
