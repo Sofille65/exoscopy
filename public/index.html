@@ -885,7 +885,7 @@
         if (!convId) {
           const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel }) }).then(r => r.json());
           convId = conv.id;
-          setActiveConvId(convId);
+          // Don't setActiveConvId here — defer until after stream starts to avoid useEffect clobbering
           setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
         }
 
@@ -916,10 +916,13 @@
         if (params.repPenalty != null) { body.repetition_penalty = params.repPenalty; body.repetition_context_size = 256; }
         if (params.seed != null) body.seed = params.seed;
 
-        // Add placeholder assistant message and start streaming via StreamManager
+        // Start streaming BEFORE setting activeConvId (for new conversations)
+        // This prevents useEffect[activeConvId] from clobbering messages with a server fetch
         setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString() }]);
         setStreaming(true);
         StreamManager.startStream(convId, body);
+        // Set activeConvId last — the stream is already running, so useEffect will find it active
+        if (convId !== activeConvId) setActiveConvId(convId);
         // Subscription handles real-time updates (see useEffect below)
       }
 
