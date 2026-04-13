@@ -1343,14 +1343,14 @@ app.post('/api/tts/speech', async (req, res) => {
         input,
         model: settings.tts.model || 'kokoro',
         voice: voice || settings.tts.voice || 'ff_siwis',
-        response_format: response_format || 'mp3',
+        response_format: response_format || 'wav',
       }),
     });
     if (!r.ok) {
       const errText = await r.text().catch(() => '');
       throw new Error(`TTS returned ${r.status}: ${errText}`);
     }
-    res.set('Content-Type', r.headers.get('content-type') || 'audio/mpeg');
+    res.set('Content-Type', r.headers.get('content-type') || 'audio/wav');
     const buffer = Buffer.from(await r.arrayBuffer());
     res.send(buffer);
   } catch (e) {
