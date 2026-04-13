@@ -1327,7 +1327,72 @@ app.get('/api/tts/voices', async (req, res) => {
   }
 });
 
-// POST /api/tts/speech — generate speech audio
+// TTS: split text into chunks at paragraph/sentence boundaries
+function splitTtsChunks(text, maxChars = 1500) {
+  const paragraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  const chunks = [];
+  let current = '';
+
+  for (const para of paragraphs) {
+    if (current.length + para.length + 2 <= maxChars) {
+      current = current ? current + '\n\n' + para : para;
+      continue;
+    }
+    if (current) { chunks.push(current); current = ''; }
+    if (para.length <= maxChars) {
+      current = para;
+    } else {
+      // Split long paragraph at sentence boundaries
+      const sentences = para.split(/(?<=[.!?…])\s+/);
+      for (const s of sentences) {
+        if (current.length + s.length + 1 <= maxChars) {
+          current = current ? current + ' ' + s : s;
+        } else {
+          if (current) chunks.push(current);
+          current = s;
+        }
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+// TTS: extract raw PCM from WAV buffer (skip RIFF/fmt/data headers)
+function extractPcm(wavBuf) {
+  let pos = 12; // skip RIFF header
+  let sampleRate = 24000, numChannels = 1, bitsPerSample = 16, pcm = null;
+  while (pos < wavBuf.length - 8) {
+    const id = wavBuf.slice(pos, pos + 4).toString('ascii');
+    const size = wavBuf.readUInt32LE(pos + 4);
+    if (id === 'fmt ') {
+      numChannels = wavBuf.readUInt16LE(pos + 10);
+      sampleRate = wavBuf.readUInt32LE(pos + 12);
+      bitsPerSample = wavBuf.readUInt16LE(pos + 22);
+    } else if (id === 'data') {
+      pcm = wavBuf.slice(pos + 8, pos + 8 + size);
+    }
+    pos += 8 + size;
+    if (pos % 2 === 1) pos++;
+  }
+  return { pcm: pcm || Buffer.alloc(0), sampleRate, numChannels, bitsPerSample };
+}
+
+// TTS: build WAV from raw PCM
+function buildWav(pcm, sampleRate, numChannels, bitsPerSample) {
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + pcm.length, 4); header.write('WAVE', 8);
+  header.write('fmt ', 12); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(numChannels, 22); header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28); header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36); header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+// POST /api/tts/speech — generate speech audio (with auto-chunking)
 app.post('/api/tts/speech', async (req, res) => {
   const settings = getSettings();
   if (!settings.tts?.enabled || !settings.tts?.endpoint) {
@@ -1335,24 +1400,43 @@ app.post('/api/tts/speech', async (req, res) => {
   }
   const { input, voice, response_format } = req.body;
   if (!input) return res.status(400).json({ error: 'input is required' });
+
+  const chunks = splitTtsChunks(input);
+  const ttsVoice = voice || settings.tts.voice || 'ff_siwis';
+  const ttsModel = settings.tts.model || 'kokoro';
+  const fmt = response_format || 'wav';
+
   try {
-    const r = await fetch(`${settings.tts.endpoint}/v1/audio/speech`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        input,
-        model: settings.tts.model || 'kokoro',
-        voice: voice || settings.tts.voice || 'ff_siwis',
-        response_format: response_format || 'wav',
-      }),
-    });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => '');
-      throw new Error(`TTS returned ${r.status}: ${errText}`);
+    const pcmParts = [];
+    let sampleRate = 24000, numChannels = 1, bitsPerSample = 16;
+    const silenceDuration = 0.4; // seconds between chunks
+
+    for (let i = 0; i < chunks.length; i++) {
+      const r = await fetch(`${settings.tts.endpoint}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: chunks[i], model: ttsModel, voice: ttsVoice, response_format: fmt }),
+      });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        throw new Error(`TTS returned ${r.status}: ${errText}`);
+      }
+      const wavBuf = Buffer.from(await r.arrayBuffer());
+      const { pcm, sampleRate: sr, numChannels: nc, bitsPerSample: bps } = extractPcm(wavBuf);
+      sampleRate = sr; numChannels = nc; bitsPerSample = bps;
+      pcmParts.push(pcm);
+
+      // Add silence between chunks
+      if (i < chunks.length - 1) {
+        const silenceBytes = Math.round(silenceDuration * sr * nc * bps / 8);
+        pcmParts.push(Buffer.alloc(silenceBytes));
+      }
     }
-    res.set('Content-Type', r.headers.get('content-type') || 'audio/wav');
-    const buffer = Buffer.from(await r.arrayBuffer());
-    res.send(buffer);
+
+    const fullPcm = Buffer.concat(pcmParts);
+    const wav = buildWav(fullPcm, sampleRate, numChannels, bitsPerSample);
+    res.set('Content-Type', 'audio/wav');
+    res.send(wav);
   } catch (e) {
     res.status(502).json({ error: `TTS speech failed: ${e.message}` });
   }
