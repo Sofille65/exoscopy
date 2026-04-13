@@ -1343,7 +1343,7 @@ app.post('/api/tts/speech', async (req, res) => {
         input,
         model: settings.tts.model || 'kokoro',
         voice: voice || settings.tts.voice || 'ff_siwis',
-        response_format: response_format || 'mp3',
+        response_format: response_format || 'wav',
       }),
     });
     if (!r.ok) {
