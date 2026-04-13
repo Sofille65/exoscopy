@@ -1494,15 +1494,13 @@ app.post('/api/chat/completions', async (req, res) => {
     if (isStreaming)           body.stream_options        = { include_usage: true };
     if (temperature != null)   body.temperature           = temperature;
     if (max_tokens  != null)   body.max_tokens            = max_tokens;
-    if (thinking === true) {
-      body.enable_thinking = true;
-      if (reasoning_effort) body.reasoning_effort = reasoning_effort;
-    }
+    body.enable_thinking = thinking === true;
     if (top_p       != null)   body.top_p                 = top_p;
     if (top_k       != null)   body.top_k                 = top_k;
     if (min_p       != null)   body.min_p                 = min_p;
     if (repetition_penalty != null) body.repetition_penalty = repetition_penalty;
     if (seed        != null)   body.seed                  = seed;
+    if (thinking && reasoning_effort) body.reasoning_effort = reasoning_effort;
   } else {
     // OpenRouter / standard OpenAI params
     if (temperature != null)   body.temperature           = temperature;
