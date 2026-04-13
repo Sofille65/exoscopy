@@ -1430,7 +1430,12 @@
                     <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Category</label>
                     <div className="flex flex-wrap gap-2">
                       {projectCategories.map(cat => (
-                        <button key={cat.id} onClick={() => setProjForm(f => ({ ...f, category: cat.id }))}
+                        <button key={cat.id} onClick={() => setProjForm(f => {
+                          // Pre-fill system prompt from category template if prompt is empty or matches another template
+                          const currentIsTemplate = projectCategories.some(c => c.systemPrompt && f.systemPrompt === c.systemPrompt);
+                          const newPrompt = ((!f.systemPrompt || currentIsTemplate) && cat.systemPrompt) ? cat.systemPrompt : f.systemPrompt;
+                          return { ...f, category: cat.id, systemPrompt: newPrompt };
+                        })}
                           className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                             projForm.category === cat.id
                               ? 'border-exo bg-exo/10 text-gray-900'
