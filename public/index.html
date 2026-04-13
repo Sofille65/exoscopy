@@ -707,9 +707,11 @@
         const handler = (entry) => {
           setMessages(prev => {
             const updated = [...prev];
-            // Update last assistant message with accumulated content
+            // Update last assistant message with accumulated content, or create one
             if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
               updated[updated.length - 1] = { ...updated[updated.length - 1], content: entry.content };
+            } else {
+              updated.push({ role: 'assistant', content: entry.content, timestamp: new Date().toISOString() });
             }
             return updated;
           });
