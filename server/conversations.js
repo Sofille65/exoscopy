@@ -37,13 +37,14 @@ function createConversationStore(convPath) {
     return _conversations;
   }
 
-  function createConversation({ engine, model, title } = {}) {
+  function createConversation({ engine, model, title, projectId } = {}) {
     const convs = getConversations();
     const conv = {
       id: crypto.randomUUID(),
       title: title || 'Nouvelle conversation',
       engine: engine || null,
       model: model || null,
+      projectId: projectId || null,
       pinned: false,
       messages: [],
       createdAt: new Date().toISOString(),
@@ -62,7 +63,7 @@ function createConversationStore(convPath) {
     const convs = getConversations();
     const idx = convs.findIndex(c => c.id === id);
     if (idx === -1) return null;
-    const allowed = ['title', 'pinned', 'engine', 'model', 'messages'];
+    const allowed = ['title', 'pinned', 'engine', 'model', 'messages', 'projectId'];
     for (const key of allowed) {
       if (updates[key] !== undefined) convs[idx][key] = updates[key];
     }
@@ -97,7 +98,7 @@ function createConversationStore(convPath) {
     const convs = getConversations();
     return convs
       .map(c => ({
-        id: c.id, title: c.title, pinned: c.pinned, engine: c.engine, model: c.model,
+        id: c.id, title: c.title, pinned: c.pinned, engine: c.engine, model: c.model, projectId: c.projectId || null,
         messageCount: c.messages.length,
         lastMessage: c.messages.length > 0 ? c.messages[c.messages.length - 1].content.slice(0, 80) : null,
         createdAt: c.createdAt, updatedAt: c.updatedAt,

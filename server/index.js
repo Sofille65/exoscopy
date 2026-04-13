@@ -31,6 +31,7 @@ const {
   authMiddleware, requireRole,
   logAuthEvent, getAuthLog, clearAuthLog,
 } = require('./auth');
+const { createProjectStore, CATEGORIES: PROJECT_CATEGORIES } = require('./projects');
 
 // ─── Express + Socket.IO bootstrap ───────────────────────────────────────────
 
@@ -65,6 +66,25 @@ function getConvStore(req) {
     return _userStores[username];
   }
   return defaultConvStore;
+}
+
+// ─── User-scoped project stores ──────────────────────────────────────────────
+
+const defaultProjStore = createProjectStore(path.join(DATA_DIR, 'projects.json'));
+const _userProjStores = {};
+
+function getProjStore(req) {
+  const settings = getSettings();
+  if (settings.adminMode && req.user) {
+    const username = req.user.username;
+    if (!_userProjStores[username]) {
+      const userDir = path.join(DATA_DIR, 'users', username);
+      if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+      _userProjStores[username] = createProjectStore(path.join(userDir, 'projects.json'));
+    }
+    return _userProjStores[username];
+  }
+  return defaultProjStore;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1243,6 +1263,47 @@ app.delete('/api/system-prompts/:name', (req, res) => {
   const prompts = loadSystemPrompts();
   const filtered = prompts.filter(p => p.name !== req.params.name);
   saveSystemPrompts(filtered);
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECTS API
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/projects/categories — predefined categories
+app.get('/api/projects/categories', (req, res) => {
+  res.json(PROJECT_CATEGORIES);
+});
+
+// GET /api/projects — list all projects
+app.get('/api/projects', (req, res) => {
+  res.json(getProjStore(req).listProjects());
+});
+
+// GET /api/projects/:id — full project
+app.get('/api/projects/:id', (req, res) => {
+  const proj = getProjStore(req).getProject(req.params.id);
+  if (!proj) return res.status(404).json({ error: 'Project not found' });
+  res.json(proj);
+});
+
+// POST /api/projects — create project
+app.post('/api/projects', (req, res) => {
+  const proj = getProjStore(req).createProject(req.body);
+  res.json(proj);
+});
+
+// PUT /api/projects/:id — update project
+app.put('/api/projects/:id', (req, res) => {
+  const proj = getProjStore(req).updateProject(req.params.id, req.body);
+  if (!proj) return res.status(404).json({ error: 'Project not found' });
+  res.json(proj);
+});
+
+// DELETE /api/projects/:id — delete project (conversations are NOT deleted, just unlinked)
+app.delete('/api/projects/:id', (req, res) => {
+  const ok = getProjStore(req).deleteProject(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Project not found' });
   res.json({ ok: true });
 });
 
