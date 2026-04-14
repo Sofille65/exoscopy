@@ -5,7 +5,7 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || path.join(__dirname, '..', 'd
 
 // ─── Defaults — no hardcoded IPs, EXO only ───────────────────
 const DEFAULTS = {
-  version: '1.7.6',
+  version: '1.8.0',
 
   // EXO nodes — empty by default, populated via discovery or Settings
   nodes: [],
@@ -36,14 +36,6 @@ const DEFAULTS = {
   // Guest mode (requires adminMode)
   guestMode: false,
   guestTokenLimit: 50000,
-
-  // Text-to-Speech (Voxtral / OpenAI-compatible)
-  tts: {
-    enabled: false,
-    endpoint: '',
-    voice: 'fr_female',
-    model: 'mlx-community/Voxtral-4B-TTS-2603-mlx-6bit',
-  },
 
   // First-run setup
   setupComplete: false,
