@@ -1459,10 +1459,7 @@
       // Models state
       const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
       const [chatModels, setChatModels] = useState([]);
-      const [loadModel, setLoadModel] = useState('');
-      const [sharding, setSharding] = useState('Pipeline');
       const [loadStatus, setLoadStatus] = useState(null);
-      const [modelPreview, setModelPreview] = useState(null);
       const [activeSyncs, setActiveSyncs] = useState([]);
       const [deleteSelection, setDeleteSelection] = useState(new Set());
       const [deleting, setDeleting] = useState(false);
@@ -1471,7 +1468,6 @@
       const [nodeMetrics, setNodeMetrics] = useState([]);
       const [ramData, setRamData] = useState([]);
 
-      const canManageModels = !userRole || userRole === 'admin' || userRole === 'organizer';
       const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
 
       // Poll real model status from exo
@@ -1481,7 +1477,6 @@
             setLoadStatus(null);
           } else {
             setLoadStatus({ status: d.status, model: d.model, readyRunners: d.readyRunners, totalRunners: d.totalRunners, loadingTasks: d.loadingTasks });
-            if (d.model && !loadModel) setLoadModel(d.model);
           }
         }).catch(() => {});
       }
@@ -1525,30 +1520,6 @@
         return (matrix[nodeName] || []).find(m => m.id === modelId);
       }
 
-      async function handleLoad() {
-        if (!loadModel) return;
-        setLoadStatus({ status: 'loading', model: loadModel });
-        try {
-          const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 1;
-          const res = await fetch('/api/monitoring/load', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modelId: loadModel, sharding, minNodes: onlineCount }),
-          });
-          if (res.ok) {
-            // Don't set to running — let the exo status poller detect the real state
-            setTimeout(refreshExoStatus, 2000);
-          } else {
-            const d = await res.json();
-            setLoadStatus({ status: 'failed', model: loadModel, error: d.error });
-          }
-        } catch (e) { setLoadStatus({ status: 'failed', model: loadModel, error: e.message }); }
-      }
-
-      async function handleUnload() {
-        await fetch('/api/monitoring/purge', { method: 'POST' });
-        setLoadStatus(null);
-      }
-
       const activeDownloads = downloads.filter(d => d.status === 'downloading');
       const queued = downloads.filter(d => d.status === 'queued');
       const history = downloads.filter(d => ['done', 'stopped', 'error'].includes(d.status));
@@ -1562,7 +1533,7 @@
 
       return (
         <div className="flex-1 flex flex-col overflow-y-auto">
-          {/* Status bar: running model + load controls */}
+          {/* Status bar: running model + exo dashboard link */}
           <div className={`flex items-center gap-3 mx-6 mt-4 px-4 py-2.5 rounded-xl flex-shrink-0 ${
             loadStatus?.status === 'running' ? 'bg-emerald-50 border border-emerald-200' :
             loadStatus?.status === 'warming' ? 'bg-blue-50 border border-blue-200' :
@@ -1574,51 +1545,27 @@
                 <div className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span className="text-[13px] font-semibold text-emerald-600">Running</span>
                 <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-                <span className="text-xs text-gray-500">· Pipeline · RDMA</span>
               </>
             ) : loadStatus?.status === 'warming' ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                 <span className="text-[13px] font-semibold text-blue-600">Warming up...</span>
                 <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-                {loadStatus.readyRunners > 0 && <span className="mono text-[10px] text-blue-400">{loadStatus.readyRunners}/{loadStatus.totalRunners} runners ready</span>}
               </>
             ) : loadStatus?.status === 'loading' ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 <span className="text-[13px] font-semibold text-amber-600">Loading...</span>
                 <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-                {loadStatus.loadingTasks > 0 && <span className="mono text-[10px] text-amber-400">{loadStatus.loadingTasks} tasks pending</span>}
               </>
             ) : (
               <span className="text-[13px] text-gray-500">No model loaded</span>
             )}
             <div className="flex-1" />
-            {canManageModels && (
-              <>
-                <select value={loadModel} onChange={e => {
-                  setLoadModel(e.target.value);
-                  if (e.target.value) {
-                    fetch(`/api/chat/instance-preview?modelId=${encodeURIComponent(e.target.value)}`).then(r => r.json()).then(d => setModelPreview(d.previews?.[0] || null)).catch(() => setModelPreview(null));
-                  } else { setModelPreview(null); }
-                }} className="mono text-xs px-3 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 min-w-[280px]">
-                  <option value="">Select a model...</option>
-                  {chatModels.map(m => <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>)}
-                </select>
-                {modelPreview && (
-                  <span className="mono text-[10px] text-gray-400">{modelPreview.storageGB} GB · {modelPreview.nLayers} layers · {modelPreview.nodeCount}n</span>
-                )}
-                <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
-                  <button onClick={() => setSharding('Pipeline')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
-                  <button onClick={() => setSharding('Tensor')} className={`px-3 py-1 text-[11px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>
-                </div>
-                {loadStatus?.status === 'running' && (
-                  <button onClick={handleUnload} className="px-3 py-1 border border-red-200 rounded-lg text-[11px] text-red-600 hover:bg-red-50">Unload</button>
-                )}
-                <button onClick={handleLoad} disabled={loadStatus?.status === 'loading' || loadStatus?.status === 'warming'}
-                  className="px-4 py-1.5 bg-exo rounded-lg text-[11px] font-semibold text-gray-900 hover:brightness-95 disabled:opacity-40">Load</button>
-              </>
-            )}
+            <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
+              className="flex items-center gap-2 px-4 py-1.5 bg-exo rounded-lg text-[11px] font-semibold text-gray-900 hover:brightness-95 transition">
+              Manage on exo Dashboard <span>↗</span>
+            </a>
           </div>
 
           {/* Two-column layout */}
