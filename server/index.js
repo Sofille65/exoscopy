@@ -25,6 +25,7 @@ const {
   startInference, appendInferenceContent, finishInference,
   getInferenceStatus, clearInference,
 } = require('./conversations');
+const { TOOL_DEFINITIONS, executeTool } = require('./tools');
 const {
   getSessionSecret, getUser, createUser, updateUser, deleteUser, listUsers,
   verifyPassword, ensureAdminUser, migrateToAdminMode,
@@ -1526,7 +1527,7 @@ app.post('/api/chat/completions', async (req, res) => {
   const {
     engine, model, messages, temperature, max_tokens, stream, thinking,
     top_p, top_k, min_p, repetition_penalty, seed, reasoning_effort,
-    conversationId,
+    conversationId, toolsEnabled,
   } = req.body;
 
   // Guest token limit check
@@ -1543,44 +1544,40 @@ app.post('/api/chat/completions', async (req, res) => {
 
   const isStreaming = stream !== false;
 
-  // Build request body — adapt per engine type
-  const body = {
-    model,
-    messages: [...messages],
-    stream: isStreaming,
-  };
-
-  if (eng.type === 'exo') {
-    // EXO-specific params
-    if (isStreaming)           body.stream_options        = { include_usage: true };
-    if (temperature != null)   body.temperature           = temperature;
-    if (max_tokens  != null)   body.max_tokens            = max_tokens;
-    body.enable_thinking = thinking === true;
-    if (top_p       != null)   body.top_p                 = top_p;
-    if (top_k       != null)   body.top_k                 = top_k;
-    if (min_p       != null)   body.min_p                 = min_p;
-    if (repetition_penalty != null) body.repetition_penalty = repetition_penalty;
-    if (seed        != null)   body.seed                  = seed;
-    if (thinking && reasoning_effort) body.reasoning_effort = reasoning_effort;
-  } else {
-    // OpenRouter / standard OpenAI params
-    if (temperature != null)   body.temperature           = temperature;
-    if (max_tokens  != null)   body.max_tokens            = max_tokens;
-    if (top_p       != null)   body.top_p                 = top_p;
-    if (seed        != null)   body.seed                  = seed;
+  // Build common params
+  function buildParams() {
+    const p = {};
+    if (eng.type === 'exo') {
+      if (temperature != null)   p.temperature           = temperature;
+      if (max_tokens  != null)   p.max_tokens            = max_tokens;
+      p.enable_thinking = thinking === true;
+      if (top_p       != null)   p.top_p                 = top_p;
+      if (top_k       != null)   p.top_k                 = top_k;
+      if (min_p       != null)   p.min_p                 = min_p;
+      if (repetition_penalty != null) p.repetition_penalty = repetition_penalty;
+      if (seed        != null)   p.seed                  = seed;
+      if (thinking && reasoning_effort) p.reasoning_effort = reasoning_effort;
+    } else {
+      if (temperature != null)   p.temperature           = temperature;
+      if (max_tokens  != null)   p.max_tokens            = max_tokens;
+      if (top_p       != null)   p.top_p                 = top_p;
+      if (seed        != null)   p.seed                  = seed;
+    }
+    return p;
   }
 
   // Build headers per engine type
-  const headers = { 'Content-Type': 'application/json' };
+  const reqHeaders = { 'Content-Type': 'application/json' };
   if (eng.type === 'openrouter' && eng.apiKey) {
-    headers['Authorization'] = `Bearer ${eng.apiKey}`;
-    headers['HTTP-Referer']  = 'https://exoscopy.local';
-    headers['X-Title']       = 'ExoScopy';
+    reqHeaders['Authorization'] = `Bearer ${eng.apiKey}`;
+    reqHeaders['HTTP-Referer']  = 'https://exoscopy.local';
+    reqHeaders['X-Title']       = 'ExoScopy';
   } else {
-    headers['Authorization'] = 'Bearer x';
+    reqHeaders['Authorization'] = 'Bearer x';
   }
 
-  console.log(`[chat] engine=${engine} type=${eng.type} model="${model}" conv=${conversationId || 'none'} stream=${body.stream}`);
+  const useTools = toolsEnabled && eng.type === 'exo'; // tools only for exo engine
+  console.log(`[chat] engine=${engine} type=${eng.type} model="${model}" conv=${conversationId || 'none'} stream=${isStreaming} tools=${useTools}`);
 
   // Resolve user's conversation store
   const convStore = getConvStore(req);
@@ -1594,99 +1591,182 @@ app.post('/api/chat/completions', async (req, res) => {
     startInference(conversationId);
   }
 
-  try {
-    const fetchRes = await fetch(`${eng.base}/v1/chat/completions`, {
-      method:  'POST',
-      headers,
-      body:    JSON.stringify(body),
-    });
+  // ── Helper: call engine (non-streaming) ──
+  async function callEngine(msgs, includeTools) {
+    const body = { model, messages: [...msgs], stream: false, ...buildParams() };
+    if (includeTools) body.tools = TOOL_DEFINITIONS;
+    const r = await fetch(`${eng.base}/v1/chat/completions`, { method: 'POST', headers: reqHeaders, body: JSON.stringify(body) });
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => `HTTP ${r.status}`);
+      throw new Error(errBody || `HTTP ${r.status}`);
+    }
+    return await r.json();
+  }
 
-    if (!fetchRes.ok) {
-      let errBody = '';
-      try { errBody = await fetchRes.text(); } catch (e) {}
-      console.error(`[chat] Upstream ${fetchRes.status}: ${errBody}`);
-      if (conversationId) finishInference(conversationId, convStore.addMessage, errBody);
-      return res.status(fetchRes.status).json({
-        error:  `Engine returned ${fetchRes.status}`,
-        detail: errBody,
-        model,
-      });
+  // ── Helper: stream engine to client (SSE) ──
+  async function streamEngine(msgs) {
+    const body = { model, messages: [...msgs], stream: true, ...buildParams() };
+    if (isStreaming) body.stream_options = { include_usage: true };
+    const r = await fetch(`${eng.base}/v1/chat/completions`, { method: 'POST', headers: reqHeaders, body: JSON.stringify(body) });
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => `HTTP ${r.status}`);
+      throw new Error(errBody || `HTTP ${r.status}`);
     }
 
-    if (body.stream) {
-      res.setHeader('Content-Type',    'text/event-stream');
-      res.setHeader('Cache-Control',   'no-cache');
-      res.setHeader('Connection',      'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
 
-      const reader  = fetchRes.body.getReader();
-      const decoder = new TextDecoder();
-      let clientConnected = true;
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let clientConnected = true;
 
-      req.on('close', () => {
-        clientConnected = false;
-        // Server continues pumping — response is persisted in background
-        console.log(`[chat] Client disconnected, inference continues in background for conv=${conversationId || 'none'}`);
-      });
+    req.on('close', () => {
+      clientConnected = false;
+      console.log(`[chat] Client disconnected, inference continues in background for conv=${conversationId || 'none'}`);
+    });
 
-      const pump = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
 
-            if (clientConnected) {
-              try { res.write(chunk); } catch (e) { clientConnected = false; }
-            }
-
-            for (const line of chunk.split('\n')) {
-              if (!line.startsWith('data: ')) continue;
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(data);
-                if (conversationId) {
-                  const delta = parsed.choices?.[0]?.delta;
-                  const text = delta?.content;
-                  const think = delta?.reasoning_content;
-                  if (think) {
-                    const inf = getInferenceStatus(conversationId);
-                    if (inf.active && !inf.content?.includes('<think>')) {
-                      appendInferenceContent(conversationId, '<think>');
-                    }
-                    appendInferenceContent(conversationId, think);
-                  } else if (text) {
-                    const inf = getInferenceStatus(conversationId);
-                    if (inf.active && inf.content?.includes('<think>') && !inf.content?.includes('</think>')) {
-                      appendInferenceContent(conversationId, '</think>');
-                    }
-                    appendInferenceContent(conversationId, text);
-                  }
-                }
-                // Track guest tokens from usage field in final chunk
-                if (req.user?.role === 'guest' && parsed.usage?.total_tokens) {
-                  req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + parsed.usage.total_tokens;
-                }
-              } catch (e) { /* not JSON */ }
-            }
-          }
-        } catch (e) {
-          console.error(`[chat] Stream error: ${e.message}`);
-          if (conversationId) finishInference(conversationId, convStore.addMessage, e.message);
+        if (clientConnected) {
+          try { res.write(chunk); } catch (e) { clientConnected = false; }
         }
-        if (conversationId) finishInference(conversationId, convStore.addMessage);
-        if (clientConnected) { try { res.end(); } catch (e) {} }
-      };
-      pump();
+
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (conversationId) {
+              const delta = parsed.choices?.[0]?.delta;
+              const text = delta?.content;
+              const think = delta?.reasoning_content;
+              if (think) {
+                const inf = getInferenceStatus(conversationId);
+                if (inf.active && !inf.content?.includes('<think>')) {
+                  appendInferenceContent(conversationId, '<think>');
+                }
+                appendInferenceContent(conversationId, think);
+              } else if (text) {
+                const inf = getInferenceStatus(conversationId);
+                if (inf.active && inf.content?.includes('<think>') && !inf.content?.includes('</think>')) {
+                  appendInferenceContent(conversationId, '</think>');
+                }
+                appendInferenceContent(conversationId, text);
+              }
+            }
+            if (req.user?.role === 'guest' && parsed.usage?.total_tokens) {
+              req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + parsed.usage.total_tokens;
+            }
+          } catch (e) { /* not JSON */ }
+        }
+      }
+    } catch (e) {
+      console.error(`[chat] Stream error: ${e.message}`);
+      if (conversationId) finishInference(conversationId, convStore.addMessage, e.message);
+    }
+    if (conversationId) finishInference(conversationId, convStore.addMessage);
+    if (clientConnected) { try { res.end(); } catch (e) {} }
+  }
+
+  // ── Helper: send SSE event to client ──
+  function sendSSE(event, data) {
+    try { res.write(`data: ${JSON.stringify({ ...data, _event: event })}\n\n`); } catch {}
+  }
+
+  try {
+    if (useTools && isStreaming) {
+      // ── Tool-aware flow ──────────────────────────────────────────
+      // Step 1: Non-streaming call with tools to detect tool_calls
+      let currentMessages = [...messages];
+      let maxRounds = 5; // safety limit
+
+      while (maxRounds-- > 0) {
+        const data = await callEngine(currentMessages, true);
+        const choice = data.choices?.[0];
+
+        if (choice?.finish_reason === 'tool_calls' || choice?.message?.tool_calls?.length) {
+          // Model wants to call tools
+          const toolCalls = choice.message.tool_calls;
+          console.log(`[chat] Tool calls: ${toolCalls.map(tc => tc.function.name).join(', ')}`);
+
+          // Start SSE if not started yet (for tool status events)
+          if (!res.headersSent) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+          }
+
+          // Add assistant's tool_calls message to conversation
+          currentMessages.push(choice.message);
+
+          // Execute each tool and send status to client
+          for (const tc of toolCalls) {
+            const fnName = tc.function.name;
+            let args = {};
+            try { args = JSON.parse(tc.function.arguments); } catch {}
+
+            sendSSE('tool_start', { tool: fnName, args });
+            const result = await executeTool(fnName, args);
+            sendSSE('tool_done', { tool: fnName });
+
+            // Add tool result to messages
+            currentMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: result,
+            });
+          }
+
+          // Track guest tokens from tool call round
+          if (req.user?.role === 'guest' && data.usage?.total_tokens) {
+            req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + data.usage.total_tokens;
+          }
+
+          // Loop: send tool results back to model (may trigger more tool calls)
+          continue;
+        }
+
+        // No tool calls — model gave a final text response
+        // Stream it to client (or if we already started SSE from tool events, stream the final call)
+        if (res.headersSent) {
+          // We already sent tool events — now stream the final response
+          // Re-call with streaming (without tools, since model already decided to respond)
+          await streamEngine(currentMessages);
+        } else if (choice?.message?.content) {
+          // No tools were called at all, but we did a non-streaming call
+          // Stream a fresh call without tools for proper SSE
+          await streamEngine(currentMessages);
+        } else {
+          // Empty response — just forward
+          res.json(data);
+          if (conversationId) finishInference(conversationId, convStore.addMessage);
+        }
+        return;
+      }
+
+      // Max rounds exceeded — stream final response
+      console.warn('[chat] Tool call loop exceeded max rounds');
+      await streamEngine(currentMessages);
+
+    } else if (isStreaming) {
+      // ── Standard streaming (no tools) ─────────────────────────────
+      await streamEngine(messages);
 
     } else {
-      const data = await fetchRes.json();
+      // ── Non-streaming ─────────────────────────────────────────────
+      const data = await callEngine(messages, false);
       if (conversationId && data.choices?.[0]?.message?.content) {
         convStore.addMessage(conversationId, 'assistant', data.choices[0].message.content);
         finishInference(conversationId, convStore.addMessage);
       }
-      // Track guest tokens
       if (req.user?.role === 'guest' && data.usage?.total_tokens) {
         req.session.guestTokensUsed = (req.session.guestTokensUsed || 0) + data.usage.total_tokens;
       }
@@ -1694,7 +1774,11 @@ app.post('/api/chat/completions', async (req, res) => {
     }
   } catch (e) {
     if (conversationId) finishInference(conversationId, convStore.addMessage, e.message);
-    res.status(502).json({ error: `Engine unreachable: ${e.message}` });
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Engine unreachable: ${e.message}` });
+    } else {
+      try { res.end(); } catch {}
+    }
   }
 });
 

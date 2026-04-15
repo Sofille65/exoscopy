@@ -66,7 +66,7 @@
     // ═══════════════════════════════════════════════════════════════════
 
     const StreamManager = {
-      _streams: new Map(), // convId → { content, done, error, stats, controller, startTime, firstTokenTime, chunkCount, promptTokens, completionTokens }
+      _streams: new Map(), // convId → { content, done, error, stats, controller, startTime, firstTokenTime, chunkCount, promptTokens, completionTokens, toolStatus }
       _listeners: new Map(), // convId → Set<fn> — persistent, survives stream lifecycle
       _globalListeners: new Set(), // notified on any stream start/stop (for badges)
 
@@ -77,6 +77,7 @@
           controller,
           startTime: Date.now(), firstTokenTime: null,
           chunkCount: 0, promptTokens: 0, completionTokens: 0,
+          toolStatus: null, // { tool, args } when a tool is executing
         };
         this._streams.set(convId, entry);
         this._notifyGlobal();
@@ -107,6 +108,17 @@
               if (data === '[DONE]') continue;
               try {
                 const parsed = JSON.parse(data);
+                // Handle tool events from server
+                if (parsed._event === 'tool_start') {
+                  entry.toolStatus = { tool: parsed.tool, args: parsed.args };
+                  this._notify(convId);
+                  continue;
+                }
+                if (parsed._event === 'tool_done') {
+                  entry.toolStatus = null;
+                  this._notify(convId);
+                  continue;
+                }
                 const delta = parsed.choices?.[0]?.delta;
                 const textContent = delta?.content;
                 const thinkContent = delta?.reasoning_content;
@@ -558,6 +570,9 @@
       const [renamingId, setRenamingId] = useState(null);
       const [renameValue, setRenameValue] = useState('');
       const [params, setParams] = useState({ temperature: 0.7, maxTokens: 32768, thinking: false, reasoningEffort: 'medium', topP: null, topK: null, minP: null, repPenalty: null, seed: null });
+      const [toolsEnabled, setToolsEnabled] = useState(() => localStorage.getItem('exoscopy-tools-enabled') === 'true');
+      useEffect(() => { localStorage.setItem('exoscopy-tools-enabled', toolsEnabled); }, [toolsEnabled]);
+      const [activeToolStatus, setActiveToolStatus] = useState(null); // { tool, args } or null
       const [systemPrompt, setSystemPrompt] = useState('');
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
       const [savedPrompts, setSavedPrompts] = useState([]);
@@ -715,6 +730,8 @@
       useEffect(() => {
         if (!activeConvId) return;
         const handler = (entry) => {
+          // Track tool execution status
+          setActiveToolStatus(entry.toolStatus || null);
           setMessages(prev => {
             const updated = [...prev];
             // Update last assistant message with accumulated content, or create one
@@ -744,6 +761,7 @@
               });
             }
             setStreaming(false);
+            setActiveToolStatus(null);
             // Auto-read response if TTS accessibility is enabled
             if (localStorage.getItem('exoscopy-tts-enabled') === 'true' && entry.content && !entry.error) {
               TTS.speak(entry.content, localStorage.getItem('exoscopy-tts-voice') || '');
@@ -931,6 +949,7 @@
         if (params.minP != null) body.min_p = params.minP;
         if (params.repPenalty != null) { body.repetition_penalty = params.repPenalty; body.repetition_context_size = 256; }
         if (params.seed != null) body.seed = params.seed;
+        if (toolsEnabled && chatSource !== 'openrouter') body.toolsEnabled = true;
 
         // Start streaming BEFORE setting activeConvId (for new conversations)
         // This prevents useEffect[activeConvId] from clobbering messages with a server fetch
@@ -1211,6 +1230,12 @@
                       <span className="text-xs text-gray-700 font-medium">Seed</span>
                       <input type="number" value={params.seed ?? ''} onChange={e => setParams(p => ({ ...p, seed: parseInt(e.target.value) || null }))} placeholder="—" className="mono text-xs px-2.5 py-1.5 border border-gray-200 rounded-md bg-white placeholder-gray-400" />
                     </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-gray-700 font-medium">🌐 Web Tools</span>
+                      <button onClick={() => setToolsEnabled(t => !t)} className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${toolsEnabled ? 'bg-indigo-500 justify-end' : 'bg-gray-200'}`}>
+                        <div className="w-4 h-4 bg-white rounded-full shadow-sm" />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {/* System prompt */}
@@ -1399,7 +1424,18 @@
                 ))}
                 {streaming && (
                   <div className="flex justify-start">
-                    <div className="px-3 py-2 text-gray-400 text-sm animate-pulse">●●●</div>
+                    {activeToolStatus ? (
+                      <div className="px-3 py-2 text-sm flex items-center gap-2">
+                        <span className="animate-spin text-indigo-500">⚙</span>
+                        <span className="text-indigo-500 font-medium">
+                          {activeToolStatus.tool === 'web_search' && `Searching: ${activeToolStatus.args?.query || '...'}`}
+                          {activeToolStatus.tool === 'web_fetch' && `Fetching: ${activeToolStatus.args?.url?.slice(0, 50) || '...'}`}
+                          {activeToolStatus.tool === 'web_fetch_full' && `Fetching: ${activeToolStatus.args?.url?.slice(0, 50) || '...'}`}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-gray-400 text-sm animate-pulse">●●●</div>
+                    )}
                   </div>
                 )}
                 <div ref={messagesEndRef} />
