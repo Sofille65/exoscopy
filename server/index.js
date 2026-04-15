@@ -2343,6 +2343,41 @@ io.on('connection', (socket) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HELP WIKI (serves .md files from help/)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HELP_DIR = path.join(__dirname, '..', 'help');
+
+// GET /api/help — list available help pages
+app.get('/api/help', (req, res) => {
+  try {
+    if (!fs.existsSync(HELP_DIR)) return res.json([]);
+    const files = fs.readdirSync(HELP_DIR)
+      .filter(f => f.endsWith('.md'))
+      .map(f => {
+        const content = fs.readFileSync(path.join(HELP_DIR, f), 'utf8');
+        const titleMatch = content.match(/^#\s+(.+)/m);
+        return { slug: f.replace('.md', ''), title: titleMatch?.[1] || f.replace('.md', ''), file: f };
+      });
+    res.json(files);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/help/:slug — get a specific help page
+app.get('/api/help/:slug', (req, res) => {
+  try {
+    const filePath = path.join(HELP_DIR, `${req.params.slug}.md`);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Page not found' });
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.json({ slug: req.params.slug, content });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────────────────────────────────────
 

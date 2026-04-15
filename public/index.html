@@ -328,113 +328,81 @@
     // ═══════════════════════════════════════════════════════════════════
 
     function HelpModal({ onClose }) {
+      const [helpPages, setHelpPages] = useState([]);
+      const [activeSlug, setActiveSlug] = useState(null);
+      const [content, setContent] = useState('');
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        fetch('/api/help').then(r => r.json()).then(pages => {
+          setHelpPages(pages);
+          if (pages.length > 0) loadPage(pages[0].slug);
+          else setLoading(false);
+        }).catch(() => setLoading(false));
+      }, []);
+
+      function loadPage(slug) {
+        setActiveSlug(slug);
+        setLoading(true);
+        fetch(`/api/help/${slug}`).then(r => r.json()).then(data => {
+          setContent(data.content || '');
+          setLoading(false);
+        }).catch(() => { setContent('# Error\nFailed to load page.'); setLoading(false); });
+      }
+
+      const renderedHtml = useMemo(() => {
+        if (!content) return '';
+        if (typeof marked !== 'undefined' && marked.parse) return marked.parse(content);
+        return content.replace(/\n/g, '<br/>');
+      }, [content]);
+
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-[700px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl">
-              <span className="text-lg font-bold text-gray-900">ExoScopy — User Guide</span>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-[850px] max-h-[80vh] flex overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Sidebar */}
+            <div className="w-[200px] bg-gray-50 border-r border-gray-200 flex flex-col flex-shrink-0">
+              <div className="px-4 py-4 border-b border-gray-200">
+                <span className="text-sm font-bold text-gray-900">Help</span>
+              </div>
+              <div className="flex flex-col py-2 overflow-y-auto flex-1">
+                {helpPages.map(p => (
+                  <button key={p.slug} onClick={() => loadPage(p.slug)}
+                    className={`text-left px-4 py-2 text-[13px] transition-colors ${activeSlug === p.slug ? 'bg-white text-gray-900 font-semibold border-r-2 border-indigo-500' : 'text-gray-600 hover:bg-gray-100'}`}>
+                    {p.title}
+                  </button>
+                ))}
+              </div>
+              <div className="px-4 py-3 border-t border-gray-200 text-[10px] text-gray-400">
+                <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-indigo-400 underline">GitHub</a>
+                {' · '}
+                <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-400 underline">exo</a>
+              </div>
             </div>
-            <div className="px-6 py-5 text-sm text-gray-700 flex flex-col gap-6">
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">What is ExoScopy?</h3>
-                <p className="leading-relaxed">ExoScopy is a web dashboard for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-500 underline">exo</a> — the open-source framework that turns Apple Silicon Macs into a distributed AI inference cluster. It gives you a clean interface to chat with your models, monitor your cluster, manage models across nodes, and download new ones from HuggingFace.</p>
+            {/* Content */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 flex-shrink-0">
+                <span className="text-lg font-bold text-gray-900">ExoScopy — User Guide</span>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
               </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Getting Started</h3>
-                <ol className="list-decimal ml-5 flex flex-col gap-1.5">
-                  <li>Go to <strong>Settings</strong> and add your EXO nodes (name + IP address)</li>
-                  <li>Click <strong>Re-discover</strong> to automatically find exo nodes on your network</li>
-                  <li>Set the <strong>EXO Endpoint</strong> (IP of your master node, port 52415)</li>
-                  <li>Click <strong>Test</strong> to verify connectivity</li>
-                  <li>For model sync between nodes: enter passwords and click <strong>Setup SSH Keys</strong></li>
-                </ol>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Chat</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li><strong>New chat</strong> — click "+ New chat" in the sidebar</li>
-                  <li><strong>Model selector</strong> — dropdown shows installed models (⚡ = currently loaded)</li>
-                  <li><strong>Presets</strong> — Creative (temp 1.2), Normal (temp 0.7), Code (temp 0.2)</li>
-                  <li><strong>Inference Settings</strong> — full parameter control (temperature, top_p, top_k, min_p, repetition penalty, seed, thinking mode)</li>
-                  <li><strong>System Prompt</strong> — toggle ON/OFF, save multiple prompts, export/import as JSON</li>
-                  <li><strong>File attachments</strong> — 📎 button to attach .py, .js, .md, .json and more — injected as code blocks</li>
-                  <li><strong>Multi-turn editing</strong> — hover a user message → pencil icon → edit and regenerate from that point</li>
-                  <li><strong>Thinking mode</strong> — enable in Inference Settings, thinking blocks shown in real-time during streaming</li>
-                  <li><strong>Stats</strong> — TTFT, speed (tk/s), tokens, generation time, chunks shown after each response with Copy button</li>
-                  <li><strong>Copy / Save</strong> — hover over a response to copy markdown or save as .md file</li>
-                  <li><strong>Code blocks</strong> — save individual files or all as .zip</li>
-                  <li><strong>Pin conversations</strong> — hover a conversation → Pin/Unpin (pinned stay on top)</li>
-                  <li><strong>Export</strong> — hover a conversation in sidebar → ↓ MD or ↓ JSON</li>
-                  <li><strong>Keyboard</strong> — Enter to send, Shift+Enter for new line, Cmd+K / Ctrl+K for new chat</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Dashboard</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li><strong>Status bar</strong> — shows running model, select + load/unload models, Pipeline/Tensor sharding</li>
-                  <li><strong>Model matrix</strong> — models × nodes. ✓ = installed, — = missing</li>
-                  <li><strong>Sync</strong> — click "Sync" to rsync a model from one node to others via SSH</li>
-                  <li><strong>Delete</strong> — click trash icons to select, then "Delete" to remove from nodes</li>
-                  <li><strong>Activity</strong> — active downloads, sync progress, queue, history</li>
-                  <li><strong>Cluster nodes</strong> — RAM usage, GPU%, temperature, watts, SSD free space per node</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Downloads</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li><strong>Search</strong> — search HuggingFace for MLX models (exo qualified only)</li>
-                  <li><strong>Filters</strong> — Quant and Parameters dropdowns, dynamically cross-filtered from results</li>
-                  <li><strong>Sort</strong> — by Popularity, Date, Likes, or Size (↑↓ direction)</li>
-                  <li><strong>Download mode</strong> — "Node 1 only" or "Distributed" (auto-rsync to all nodes after download)</li>
-                  <li><strong>Direct download</strong> — paste a HuggingFace repo ID (e.g. mlx-community/ModelName) and click ↓</li>
-                  <li><strong>Download queue</strong> — max 3 concurrent downloads, progress bar at bottom of page</li>
-                  <li><strong>Persistent search</strong> — results stay when switching pages, "Clear results" to reset</li>
-                  <li><strong>HF link</strong> — click the ↗ icon on any result to view on HuggingFace</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Settings</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li><strong>Nodes</strong> — add/remove EXO cluster nodes</li>
-                  <li><strong>Re-discover</strong> — scan your LAN for exo nodes (port 52415)</li>
-                  <li><strong>SSH Keys</strong> — enter passwords per node, click "Setup SSH Keys" to install keys (container + inter-node)</li>
-                  <li><strong>Config Check</strong> — verify SSH, exo API, Python, huggingface_hub, rsync, model path, disk free per node</li>
-                  <li><strong>EXO Endpoint</strong> — IP and port of your exo master node</li>
-                  <li><strong>OpenRouter</strong> — optional cloud fallback. Add your API key (sk-or-...) to access cloud models (GPT-4, Claude, Gemini, etc.) alongside local exo models</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">OpenRouter (Cloud)</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li>Go to <strong>Settings</strong> → enter your OpenRouter API key → <strong>Save Settings</strong></li>
-                  <li>In <strong>Chat</strong>, an <strong>EXO / Cloud</strong> toggle appears next to the model dropdown</li>
-                  <li>Switch to <strong>Cloud</strong> to browse models from OpenAI, Anthropic, Google, Meta, Mistral, and more</li>
-                  <li>Models are grouped by provider in the dropdown for easy browsing</li>
-                  <li>No toggle shown if no API key is configured — exo-only by default</li>
-                  <li>Get your API key at <a href="https://openrouter.ai" target="_blank" className="text-indigo-500 underline">openrouter.ai</a></li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base mb-2">Tips</h3>
-                <ul className="list-disc ml-5 flex flex-col gap-1">
-                  <li>exo's native dashboard is available via the <strong>↗ exo Dashboard</strong> link in the nav bar</li>
-                  <li>Thinking mode (Qwen3.5) is OFF by default — enable in Inference Settings if needed</li>
-                  <li>Models must be installed on ALL nodes to be loaded on the cluster — use Sync to distribute</li>
-                  <li>The download queue supports max 3 concurrent downloads from HuggingFace</li>
-                </ul>
-              </div>
-
-              <div className="text-xs text-gray-400 border-t border-gray-100 pt-4">
-                ExoScopy v1.2.0 — <a href="https://github.com/Sofille65/exoscopy" target="_blank" className="text-indigo-400 underline">GitHub</a> · Built for <a href="https://github.com/exo-explore/exo" target="_blank" className="text-indigo-400 underline">exo</a>
+              <div className="flex-1 overflow-y-auto px-6 py-5">
+                {loading ? (
+                  <div className="text-sm text-gray-400">Loading...</div>
+                ) : (
+                  <div className="prose prose-sm prose-gray max-w-none
+                    [&_h1]:text-xl [&_h1]:font-bold [&_h1]:text-gray-900 [&_h1]:mb-4
+                    [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-gray-900 [&_h2]:mt-6 [&_h2]:mb-2
+                    [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-gray-800 [&_h3]:mt-4 [&_h3]:mb-1.5
+                    [&_p]:text-sm [&_p]:text-gray-700 [&_p]:leading-relaxed [&_p]:mb-3
+                    [&_ul]:text-sm [&_ul]:text-gray-700 [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:mb-3 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-1
+                    [&_ol]:text-sm [&_ol]:text-gray-700 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:mb-3 [&_ol]:flex [&_ol]:flex-col [&_ol]:gap-1
+                    [&_a]:text-indigo-500 [&_a]:underline
+                    [&_code]:mono [&_code]:text-[13px] [&_code]:bg-gray-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded
+                    [&_strong]:font-semibold [&_strong]:text-gray-900
+                    [&_table]:w-full [&_table]:text-sm [&_table]:border-collapse [&_table]:mb-3
+                    [&_th]:text-left [&_th]:px-3 [&_th]:py-2 [&_th]:border-b [&_th]:border-gray-200 [&_th]:font-semibold [&_th]:text-gray-700
+                    [&_td]:px-3 [&_td]:py-2 [&_td]:border-b [&_td]:border-gray-100 [&_td]:text-gray-600"
+                    dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+                )}
               </div>
             </div>
           </div>
@@ -479,7 +447,8 @@
               </div>
             )}
             <button onClick={() => setShowHelp(true)}
-              className="flex items-center gap-1 px-2 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+              <span className="text-xs text-gray-500">Help</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </button>
             <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
@@ -896,19 +865,16 @@
         .filter(c => !searchQuery || c.title?.toLowerCase().includes(searchQuery.toLowerCase()));
 
       // Project modal state
-      const [projForm, setProjForm] = useState({ name: '', category: 'general', systemPrompt: '', instructions: '', memoryScope: 'default' });
-      const [projAdvanced, setProjAdvanced] = useState(false);
+      const [projForm, setProjForm] = useState({ name: '', category: 'general', systemPrompt: '' });
 
       // Load project data into form when editing
       useEffect(() => {
         if (editingProject) {
           fetch(`/api/projects/${editingProject}`).then(r => r.json()).then(p => {
-            setProjForm({ name: p.name, category: p.category, systemPrompt: p.systemPrompt || '', instructions: p.instructions || '', memoryScope: p.memoryScope || 'default' });
-            setProjAdvanced(!!(p.instructions || p.memoryScope !== 'default'));
+            setProjForm({ name: p.name, category: p.category, systemPrompt: p.systemPrompt || '' });
           }).catch(() => {});
         } else if (showNewProject) {
-          setProjForm({ name: '', category: 'general', systemPrompt: '', instructions: '', memoryScope: 'default' });
-          setProjAdvanced(false);
+          setProjForm({ name: '', category: 'general', systemPrompt: '' });
         }
       }, [editingProject, showNewProject]);
 
@@ -1467,35 +1433,6 @@
                   </div>
 
                   {/* Advanced toggle */}
-                  <button onClick={() => setProjAdvanced(!projAdvanced)}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 mb-3 transition">
-                    <span className={`transform transition-transform ${projAdvanced ? 'rotate-90' : ''}`}>▶</span>
-                    Advanced Settings
-                  </button>
-
-                  {projAdvanced && (
-                    <div className="border border-gray-100 rounded-lg p-4 mb-4 bg-gray-50/50 flex flex-col gap-4">
-                      {/* Memory scope */}
-                      <div>
-                        <label className="text-xs font-medium text-gray-600 mb-1.5 block">Memory scope</label>
-                        <div className="flex gap-2">
-                          {[{ v: 'default', l: 'Default' }, { v: 'project-only', l: 'Project only' }].map(opt => (
-                            <button key={opt.v} onClick={() => setProjForm(f => ({ ...f, memoryScope: opt.v }))}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                projForm.memoryScope === opt.v ? 'border-exo bg-exo/10 text-gray-900' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                              }`}>{opt.l}</button>
-                          ))}
-                        </div>
-                      </div>
-                      {/* Instructions */}
-                      <div>
-                        <label className="text-xs font-medium text-gray-600 mb-1.5 block">Instructions <span className="text-gray-400 font-normal">({projForm.instructions.length}/1000)</span></label>
-                        <textarea value={projForm.instructions} onChange={e => setProjForm(f => ({ ...f, instructions: e.target.value.slice(0, 1000) }))}
-                          placeholder="Additional context or constraints..."
-                          className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg bg-white resize-none h-[80px] outline-none focus:border-exo transition" />
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* Footer */}
@@ -1888,9 +1825,6 @@
     function ModelsPage({ clusterStatus }) {
       const [matrixData, setMatrixData] = useState({ nodes: [], models: [], matrix: {}, activeModel: null, diskInfo: {} });
       const [chatModels, setChatModels] = useState([]);
-      const [loadModel, setLoadModel] = useState('');
-      const [sharding, setSharding] = useState('Pipeline');
-      const [loadStatus, setLoadStatus] = useState(null);
       const [activeSyncs, setActiveSyncs] = useState([]);
       const [deleteSelection, setDeleteSelection] = useState(new Set()); // "modelId::nodeName"
       const [deleting, setDeleting] = useState(false);
@@ -1898,10 +1832,6 @@
       function refreshMatrix() {
         fetch('/api/models/matrix').then(r => r.json()).then(d => {
           setMatrixData(d);
-          if (d.activeModel && !loadModel) {
-            setLoadModel(d.activeModel);
-            setLoadStatus({ status: 'running', model: d.activeModel });
-          }
         }).catch(() => {});
         fetch('/api/chat/models?engine=exo1').then(r => r.json()).then(d => setChatModels(d.models || [])).catch(() => {});
       }
@@ -1921,33 +1851,6 @@
       }, []);
 
       const { nodes: nodeNames, models, matrix, activeModel, diskInfo } = matrixData;
-
-      async function handleLoad() {
-        if (!loadModel) return;
-        setLoadStatus({ status: 'loading', model: loadModel });
-        try {
-          const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 1;
-          const res = await fetch('/api/monitoring/load', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modelId: loadModel, sharding, minNodes: onlineCount }),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            setLoadStatus({ status: 'running', model: loadModel });
-          } else {
-            setLoadStatus({ status: 'failed', model: loadModel, error: data.error });
-          }
-        } catch (e) {
-          setLoadStatus({ status: 'failed', model: loadModel, error: e.message });
-        }
-      }
-
-      async function handleUnload() {
-        try {
-          await fetch('/api/monitoring/purge', { method: 'POST' });
-          setLoadStatus(null);
-        } catch (e) {}
-      }
 
       function modelOnNode(modelId, nodeName) {
         const nodeList = matrix[nodeName] || [];
@@ -2096,61 +1999,18 @@
             </div>
           )}
 
-          {/* Load Model section */}
+          {/* Model Management — link to exo Dashboard */}
           <div className="px-10 pb-6">
-            <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex justify-between items-center">
-                <span className="text-lg font-bold text-gray-900">Load Model</span>
-                <span className="text-xs text-gray-400">v1: single instance</span>
+            <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center justify-between">
+              <div>
+                <span className="text-lg font-bold text-gray-900">Model Management</span>
+                <p className="text-xs text-gray-400 mt-1">Load, unload and manage models directly on the exo dashboard</p>
               </div>
-              <div className="flex gap-4 items-end">
-                <div className="flex-1 flex flex-col gap-1.5">
-                  <span className="text-xs text-gray-500 font-medium">Model</span>
-                  <select value={loadModel} onChange={e => setLoadModel(e.target.value)}
-                    className="mono text-xs px-3 py-2.5 border border-gray-200 rounded-lg bg-white text-gray-900">
-                    <option value="">Select a model...</option>
-                    {chatModels.map(m => (
-                      <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs text-gray-500 font-medium">Sharding</span>
-                  <div className="flex border border-gray-200 rounded-lg overflow-hidden">
-                    <button onClick={() => setSharding('Pipeline')} className={`px-4 py-2 text-[13px] font-medium ${sharding === 'Pipeline' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Pipeline</button>
-                    <button onClick={() => setSharding('Tensor')} className={`px-4 py-2 text-[13px] font-medium ${sharding === 'Tensor' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-500'}`}>Tensor</button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status + Load button */}
-              {loadStatus ? (
-                <div className={`flex items-center gap-3 px-4 py-3 rounded-lg ${
-                  loadStatus.status === 'running' ? 'bg-emerald-50 border border-emerald-200' :
-                  loadStatus.status === 'loading' ? 'bg-amber-50 border border-amber-200' :
-                  'bg-red-50 border border-red-200'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full ${
-                    loadStatus.status === 'running' ? 'bg-emerald-500' :
-                    loadStatus.status === 'loading' ? 'bg-amber-500 animate-pulse' : 'bg-red-500'
-                  }`} />
-                  <span className={`text-[13px] font-semibold ${
-                    loadStatus.status === 'running' ? 'text-emerald-600' :
-                    loadStatus.status === 'loading' ? 'text-amber-600' : 'text-red-600'
-                  }`}>{loadStatus.status === 'running' ? 'Running' : loadStatus.status === 'loading' ? 'Loading...' : 'Failed'}</span>
-                  <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-                  {loadStatus.error && <span className="text-xs text-red-500">{loadStatus.error}</span>}
-                  <div className="flex-1" />
-                  {loadStatus.status === 'running' && (
-                    <button onClick={handleUnload} className="px-3 py-1 border border-red-200 rounded text-xs text-red-600 hover:bg-red-50">Unload</button>
-                  )}
-                  <button onClick={handleLoad} className="px-4 py-1.5 bg-exo rounded-md text-[13px] font-semibold text-gray-900 hover:brightness-95">Load Model</button>
-                </div>
-              ) : (
-                <div className="flex justify-end">
-                  <button onClick={handleLoad} className="px-5 py-2.5 bg-exo rounded-lg text-sm font-semibold text-gray-900 hover:brightness-95">Load Model</button>
-                </div>
-              )}
+              <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
+                className="flex items-center gap-2 px-5 py-2.5 bg-exo rounded-lg text-sm font-semibold text-gray-900 hover:brightness-95 transition">
+                <span>Manage on exo Dashboard</span>
+                <span className="text-base">↗</span>
+              </a>
             </div>
           </div>
 
