@@ -2347,6 +2347,7 @@ io.on('connection', (socket) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HELP_DIR = path.join(__dirname, '..', 'help');
+const HELP_ORDER = ['getting-started', 'chat', 'dashboard', 'downloads', 'settings', 'tips'];
 
 // GET /api/help — list available help pages
 app.get('/api/help', (req, res) => {
@@ -2358,6 +2359,11 @@ app.get('/api/help', (req, res) => {
         const content = fs.readFileSync(path.join(HELP_DIR, f), 'utf8');
         const titleMatch = content.match(/^#\s+(.+)/m);
         return { slug: f.replace('.md', ''), title: titleMatch?.[1] || f.replace('.md', ''), file: f };
+      })
+      .sort((a, b) => {
+        const ia = HELP_ORDER.indexOf(a.slug);
+        const ib = HELP_ORDER.indexOf(b.slug);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
       });
     res.json(files);
   } catch (e) {

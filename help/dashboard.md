@@ -2,6 +2,8 @@
 
 The Dashboard tab gives you a real-time overview of your exo cluster.
 
+> **Admin mode only** — This tab is visible to admins and organizers only.
+
 ## Space View
 
 The signature visual — a diamond topology showing your cluster nodes with live metrics:
@@ -16,8 +18,8 @@ A grid of models × nodes:
 
 - **✓** = model installed on that node
 - **—** = model missing from that node
-- **Sync** — click to rsync a model from one node to the others via SSH
-- **Delete** — click trash icons to select models for deletion, then confirm
+- **Sync** — click to rsync a model from one node to the others via SSH *(admin only)*
+- **Delete** — click trash icons to select models for deletion, then confirm *(admin only)*
 
 ## Activity
 

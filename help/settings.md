@@ -1,5 +1,7 @@
 # Settings
 
+> **Admin mode only** — Settings are only accessible to admin users.
+
 ## Nodes
 
 Add and manage your exo cluster nodes:

@@ -2,6 +2,8 @@
 
 The Downloads tab lets you search and download models from HuggingFace directly to your cluster nodes.
 
+> **Admin mode only** — This tab is visible to admins and organizers only.
+
 ## Search
 
 - Search HuggingFace for MLX models (exo qualified only)
