@@ -44,6 +44,17 @@ Optional. Add your OpenRouter API key (`sk-or-...`) to access cloud models along
 - Toggle between EXO and Cloud in the Chat tab
 - Get your key at [openrouter.ai](https://openrouter.ai)
 
+## Accessibility
+
+Text-to-speech for visually impaired users:
+
+- **Auto-read** — when enabled, assistant responses are read aloud automatically after generation
+- **Voice selection** — choose from your browser's available voices (system voices, varies by OS)
+- **Listen button** — click the speaker icon on any assistant message to hear it
+- **Test** — preview your selected voice before enabling auto-read
+- Works offline, no API key or external service needed (uses browser built-in speech synthesis)
+- Settings are per-browser (stored locally)
+
 ## Admin Mode
 
 Enable multi-user access with authentication:

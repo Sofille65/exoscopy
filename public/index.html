@@ -310,6 +310,66 @@
       key: (color = 'currentColor') => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
       lock: (color = 'currentColor') => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
       save: (color = 'currentColor') => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
+      speaker: (color = 'currentColor') => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>,
+      speakerOff: (color = 'currentColor') => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>,
+    };
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TTS — Browser speech synthesis for accessibility
+    // ═══════════════════════════════════════════════════════════════════
+
+    const TTS = {
+      _utterance: null,
+      _speaking: false,
+      _listeners: new Set(),
+
+      // Strip markdown/HTML for clean speech
+      cleanText(text) {
+        if (!text) return '';
+        return text
+          .replace(/<think>[\s\S]*?<\/think>/g, '') // remove thinking blocks
+          .replace(/```[\s\S]*?```/g, ' code block omitted ') // code blocks
+          .replace(/`([^`]+)`/g, '$1') // inline code
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+          .replace(/#{1,6}\s+/g, '') // headings
+          .replace(/[*_~]{1,3}/g, '') // bold/italic/strikethrough
+          .replace(/\|[^\n]+\|/g, '') // tables
+          .replace(/^[-*+]\s+/gm, '') // list markers
+          .replace(/^\d+\.\s+/gm, '') // numbered lists
+          .replace(/\n{2,}/g, '. ') // paragraph breaks → pause
+          .replace(/\n/g, ' ')
+          .trim();
+      },
+
+      speak(text, voiceURI) {
+        this.stop();
+        const clean = this.cleanText(text);
+        if (!clean) return;
+        const utterance = new SpeechSynthesisUtterance(clean);
+        if (voiceURI) {
+          const voice = speechSynthesis.getVoices().find(v => v.voiceURI === voiceURI);
+          if (voice) utterance.voice = voice;
+        }
+        utterance.rate = 1.0;
+        utterance.onend = () => { this._speaking = false; this._utterance = null; this._notifyAll(); };
+        utterance.onerror = () => { this._speaking = false; this._utterance = null; this._notifyAll(); };
+        this._utterance = utterance;
+        this._speaking = true;
+        this._notifyAll();
+        speechSynthesis.speak(utterance);
+      },
+
+      stop() {
+        if (speechSynthesis.speaking) speechSynthesis.cancel();
+        this._speaking = false;
+        this._utterance = null;
+        this._notifyAll();
+      },
+
+      isSpeaking() { return this._speaking; },
+
+      subscribe(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); },
+      _notifyAll() { this._listeners.forEach(fn => fn(this._speaking)); },
     };
 
     function formatBytes(bytes) {
@@ -519,6 +579,25 @@
       const [selectedPromptIdx, setSelectedPromptIdx] = useState(-1);
       const statsMapRef = useRef({}); // convId-msgIdx → stats
       const messagesEndRef = useRef(null);
+
+      // TTS accessibility
+      const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('exoscopy-tts-enabled') === 'true');
+      const [ttsVoice, setTtsVoice] = useState(() => localStorage.getItem('exoscopy-tts-voice') || '');
+      const [ttsSpeaking, setTtsSpeaking] = useState(false);
+
+      useEffect(() => {
+        return TTS.subscribe(speaking => setTtsSpeaking(speaking));
+      }, []);
+
+      // Sync TTS settings from localStorage (Settings page writes directly)
+      useEffect(() => {
+        const handler = () => {
+          setTtsEnabled(localStorage.getItem('exoscopy-tts-enabled') === 'true');
+          setTtsVoice(localStorage.getItem('exoscopy-tts-voice') || '');
+        };
+        window.addEventListener('tts-settings-changed', handler);
+        return () => window.removeEventListener('tts-settings-changed', handler);
+      }, []);
       const inputRef = useRef(null);
       const fileInputRef = useRef(null);
       const [expandedEditor, setExpandedEditor] = useState(false);
@@ -665,6 +744,10 @@
               });
             }
             setStreaming(false);
+            // Auto-read response if TTS accessibility is enabled
+            if (localStorage.getItem('exoscopy-tts-enabled') === 'true' && entry.content && !entry.error) {
+              TTS.speak(entry.content, localStorage.getItem('exoscopy-tts-voice') || '');
+            }
             // Refresh conversation list
             fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {});
             // Clean up after a short delay (let stats render)
@@ -814,7 +897,9 @@
 
         let convId = activeConvId;
         if (!convId) {
-          const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel }) }).then(r => r.json());
+          const newConvBody = { engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel };
+          if (activeProjectId) newConvBody.projectId = activeProjectId;
+          const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newConvBody) }).then(r => r.json());
           convId = conv.id;
           // Don't setActiveConvId here — defer until after stream starts to avoid useEffect clobbering
           setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
@@ -976,17 +1061,30 @@
                     <span className="text-[11px] text-gray-400">{timeAgo(c.updatedAt)}</span>
                   </div>
                   {c.lastMessage && <span className="text-[12px] text-gray-400 truncate">{c.lastMessage}</span>}
-                  <div className="hidden group-hover:flex justify-between items-center mt-0.5">
-                    <div className="flex gap-2">
-                      <button onClick={e => { e.stopPropagation(); togglePin(c.id); }}
-                        className={`text-[10px] ${c.pinned ? 'text-amber-500' : 'text-gray-400'} hover:text-amber-600`}>{c.pinned ? 'Unpin' : 'Pin'}</button>
-                      <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'md')); }}
-                        className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ MD</button>
-                      <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'json')); }}
-                        className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ JSON</button>
+                  <div className="hidden group-hover:flex flex-col gap-1 mt-0.5">
+                    <div className="flex justify-between items-center">
+                      <div className="flex gap-2">
+                        <button onClick={e => { e.stopPropagation(); togglePin(c.id); }}
+                          className={`text-[10px] ${c.pinned ? 'text-amber-500' : 'text-gray-400'} hover:text-amber-600`}>{c.pinned ? 'Unpin' : 'Pin'}</button>
+                        <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'md')); }}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ MD</button>
+                        <button onClick={e => { e.stopPropagation(); fetch(`/api/conversations/${c.id}`).then(r=>r.json()).then(d => exportConversation(d, d.messages, 'json')); }}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-600">↓ JSON</button>
+                      </div>
+                      <button onClick={e => { e.stopPropagation(); deleteConversation(c.id); }}
+                        className="text-[10px] text-red-400 hover:text-red-600">Delete</button>
                     </div>
-                    <button onClick={e => { e.stopPropagation(); deleteConversation(c.id); }}
-                      className="text-[10px] text-red-400 hover:text-red-600">Delete</button>
+                    {projects.length > 0 && (
+                      <select value={c.projectId || ''} onClick={e => e.stopPropagation()} onChange={async e => {
+                        e.stopPropagation();
+                        const newProjectId = e.target.value || null;
+                        await fetch(`/api/conversations/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: newProjectId }) });
+                        setConversations(prev => prev.map(x => x.id === c.id ? { ...x, projectId: newProjectId } : x));
+                      }} className="text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 w-full cursor-pointer">
+                        <option value="">No project</option>
+                        {projects.map(p => <option key={p.id} value={p.id}>{p.icon} {p.name}</option>)}
+                      </select>
+                    )}
                   </div>
                 </button>
               ))}
@@ -1235,6 +1333,10 @@
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMd(msg.content) }} />
                           {!streaming && msg.content && (
                             <div className="flex absolute top-2 right-2 gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                              <button onClick={() => { if (ttsSpeaking) TTS.stop(); else TTS.speak(msg.content, ttsVoice); }}
+                                className="px-2 py-1 text-gray-500 bg-white/90 border border-gray-200 rounded-md hover:bg-gray-100 hover:text-gray-700 backdrop-blur-sm flex items-center gap-1"
+                                title={ttsSpeaking ? 'Stop reading' : 'Read aloud'}>
+                                {ttsSpeaking ? Icons.speakerOff('#6b7280') : Icons.speaker('#6b7280')}<span className="text-[10px]">{ttsSpeaking ? 'Stop' : 'Listen'}</span></button>
                               <button onClick={() => { copyToClipboard(msg.content); }}
                                 className="px-2 py-1 text-gray-500 bg-white/90 border border-gray-200 rounded-md hover:bg-gray-100 hover:text-gray-700 backdrop-blur-sm flex items-center gap-1">
                                 {Icons.copy('#6b7280')}<span className="text-[10px]">Copy</span></button>
@@ -2262,6 +2364,15 @@
       // Auth log
       const [authLog, setAuthLog] = useState([]);
       const [authLogOpen, setAuthLogOpen] = useState(false);
+      // TTS accessibility
+      const [ttsSettingsKey, setTtsSettingsKey] = useState(0); // force re-render
+      const [availableVoices, setAvailableVoices] = useState([]);
+      useEffect(() => {
+        const loadVoices = () => setAvailableVoices(speechSynthesis.getVoices());
+        loadVoices();
+        speechSynthesis.onvoiceschanged = loadVoices;
+        return () => { speechSynthesis.onvoiceschanged = null; };
+      }, []);
       useEffect(() => {
         if (settings) {
           setNodes(settings.nodes || []);
@@ -2643,6 +2754,41 @@
                 <input type="password" value={openRouterKey} onChange={e => setOpenRouterKey(e.target.value)}
                   placeholder="sk-or-..." className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[400px]" />
                 {openRouterKey && <span className="text-[11px] text-emerald-500">Key configured</span>}
+              </div>
+            </div>
+
+            {/* Accessibility — TTS */}
+            <div className="flex flex-col gap-3">
+              <span className="text-sm font-semibold text-gray-900">Accessibility</span>
+              <p className="text-xs text-gray-400">Read assistant responses aloud using your browser's built-in text-to-speech. Works offline, no API key needed.</p>
+              <div className="flex items-center gap-4">
+                <button onClick={() => {
+                  const cur = localStorage.getItem('exoscopy-tts-enabled') === 'true';
+                  localStorage.setItem('exoscopy-tts-enabled', !cur);
+                  setTtsSettingsKey(k => k + 1);
+                  window.dispatchEvent(new Event('tts-settings-changed'));
+                }} className={`relative w-11 h-6 rounded-full transition-colors ${localStorage.getItem('exoscopy-tts-enabled') === 'true' ? 'bg-indigo-500' : 'bg-gray-300'}`}>
+                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${localStorage.getItem('exoscopy-tts-enabled') === 'true' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                </button>
+                <span className="text-xs text-gray-600">{localStorage.getItem('exoscopy-tts-enabled') === 'true' ? 'Auto-read enabled' : 'Disabled'}</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-gray-500">Voice</span>
+                <select value={localStorage.getItem('exoscopy-tts-voice') || ''} onChange={e => {
+                  localStorage.setItem('exoscopy-tts-voice', e.target.value);
+                  setTtsSettingsKey(k => k + 1);
+                  window.dispatchEvent(new Event('tts-settings-changed'));
+                }} className="text-sm px-3 py-2 border border-gray-200 rounded-lg bg-white w-[400px]">
+                  <option value="">System default</option>
+                  {availableVoices.map(v => (
+                    <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang}){v.localService ? '' : ' — online'}</option>
+                  ))}
+                </select>
+                <button onClick={() => {
+                  TTS.speak('Hello! This is how I will read responses for you.', localStorage.getItem('exoscopy-tts-voice') || '');
+                }} className="self-start px-3 py-1.5 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 flex items-center gap-1.5">
+                  {Icons.speaker('#6b7280')} Test voice
+                </button>
               </div>
             </div>
 
