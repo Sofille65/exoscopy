@@ -20,4 +20,4 @@ Contact: [exoscopy@themonoclebear.com](mailto:exoscopy@themonoclebear.com)
 
 ---
 
-The Monocle Bear — Mons, Belgium
+The Monocle Bear — Mons, Belgium / Tallinn, Estonia
