@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --production
 COPY server/ ./server/
 COPY public/ ./public/
+COPY help/ ./help/
 VOLUME /app/data
 EXPOSE 3456
 CMD ["node", "server/index.js"]
