@@ -2347,7 +2347,7 @@ io.on('connection', (socket) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HELP_DIR = path.join(__dirname, '..', 'help');
-const HELP_ORDER = ['getting-started', 'chat', 'dashboard', 'downloads', 'settings', 'tips'];
+const HELP_ORDER = ['getting-started', 'chat', 'dashboard', 'downloads', 'settings', 'tips', 'about'];
 
 // GET /api/help — list available help pages
 app.get('/api/help', (req, res) => {
