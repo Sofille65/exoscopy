@@ -451,11 +451,13 @@
               <span className="text-xs text-gray-500">Help</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </button>
-            <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
-              className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
-              <span className="text-[11px]">↗</span>
-              <span className="text-xs text-gray-500">exo Dashboard</span>
-            </a>
+            {(!user || user.role === 'admin' || user.role === 'organizer') && (
+              <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
+                className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+                <span className="text-[11px]">↗</span>
+                <span className="text-xs text-gray-500">exo Dashboard</span>
+              </a>
+            )}
             {user && (
               <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
                 <span className="text-xs text-gray-500">{user.username}</span>
