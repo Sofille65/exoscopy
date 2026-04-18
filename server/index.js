@@ -1465,7 +1465,11 @@ app.get('/api/chat/models', async (req, res) => {
     const models = (data.data || [])
       .filter(m => ![...deletedModels].some(d => d.startsWith(`${m.id}::`)))
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(m => ({ id: m.id, name: m.id, family: m.family, quantization: m.quantization }));
+      .map(m => ({
+        id: m.id, name: m.id, family: m.family, quantization: m.quantization,
+        capabilities: m.capabilities || [],
+        vision: (m.capabilities || []).includes('vision') || !!m.vision,
+      }));
     res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
@@ -1638,6 +1642,8 @@ app.post('/api/chat/completions', async (req, res) => {
         }
 
         for (const line of chunk.split('\n')) {
+          // SSE comment (keepalive from exo v1.0.70+) — ignore
+          if (line.startsWith(':')) continue;
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (data === '[DONE]') continue;

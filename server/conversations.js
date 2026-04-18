@@ -5,6 +5,26 @@ const crypto = require('crypto');
 // Active inferences — global, keyed by conversationId (UUID, no collision across users)
 const _activeInferences = new Map();
 
+// Extract text preview from either string or multimodal content array
+function contentToText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const parts = [];
+    let imageCount = 0;
+    for (const p of content) {
+      if (p?.type === 'text' && typeof p.text === 'string') parts.push(p.text);
+      else if (p?.type === 'image_url') imageCount++;
+    }
+    const text = parts.join(' ').trim();
+    if (imageCount > 0) {
+      const tag = imageCount === 1 ? '[image]' : `[${imageCount} images]`;
+      return text ? `${tag} ${text}` : tag;
+    }
+    return text;
+  }
+  return '';
+}
+
 // ─── Factory: create a conversation store scoped to a file path ──
 
 function createConversationStore(convPath) {
@@ -88,7 +108,8 @@ function createConversationStore(convPath) {
     conv.messages.push({ role, content, timestamp: new Date().toISOString() });
     conv.updatedAt = new Date().toISOString();
     if (role === 'user' && conv.messages.filter(m => m.role === 'user').length === 1) {
-      conv.title = content.slice(0, 60) + (content.length > 60 ? '…' : '');
+      const text = contentToText(content);
+      conv.title = text.slice(0, 60) + (text.length > 60 ? '…' : '');
     }
     saveConversations();
     return conv;
@@ -100,7 +121,7 @@ function createConversationStore(convPath) {
       .map(c => ({
         id: c.id, title: c.title, pinned: c.pinned, engine: c.engine, model: c.model, projectId: c.projectId || null,
         messageCount: c.messages.length,
-        lastMessage: c.messages.length > 0 ? c.messages[c.messages.length - 1].content.slice(0, 80) : null,
+        lastMessage: c.messages.length > 0 ? contentToText(c.messages[c.messages.length - 1].content).slice(0, 80) : null,
         createdAt: c.createdAt, updatedAt: c.updatedAt,
       }))
       .sort((a, b) => {

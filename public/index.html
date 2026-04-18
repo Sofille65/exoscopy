@@ -103,6 +103,8 @@
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
             for (const line of chunk.split('\n')) {
+              // SSE comment (keepalive from exo v1.0.70+) — ignore
+              if (line.startsWith(':')) continue;
               if (!line.startsWith('data: ')) continue;
               const data = line.slice(6).trim();
               if (data === '[DONE]') continue;
@@ -786,13 +788,27 @@
         setParams(prev => ({ ...prev, temperature: p.temperature, topP: p.topP, topK: p.topK, minP: p.minP, maxTokens: p.maxTokens, thinking: p.thinking }));
       }
 
-      // File attachments
+      // File attachments — images as base64 DataURL, text files as text
       function handleFileAttach(e) {
         const files = Array.from(e.target.files || []);
         files.forEach(file => {
+          const isImage = file.type.startsWith('image/');
           const reader = new FileReader();
-          reader.onload = (ev) => setAttachedFiles(prev => [...prev, { name: file.name, content: ev.target.result, size: file.size }]);
-          reader.readAsText(file);
+          reader.onload = (ev) => {
+            if (isImage) {
+              setAttachedFiles(prev => [...prev, {
+                name: file.name, type: 'image', mimeType: file.type,
+                dataUrl: ev.target.result, size: file.size,
+              }]);
+            } else {
+              setAttachedFiles(prev => [...prev, {
+                name: file.name, type: 'text',
+                content: ev.target.result, size: file.size,
+              }]);
+            }
+          };
+          if (isImage) reader.readAsDataURL(file);
+          else reader.readAsText(file);
         });
         e.target.value = '';
       }
@@ -801,7 +817,12 @@
       async function handleEdit(msgIndex) {
         const msg = messages[msgIndex];
         if (msg.role !== 'user') return;
-        setInput(msg.content);
+        // Extract text portion (multimodal messages store images we can't easily re-edit)
+        let textContent = msg.content;
+        if (Array.isArray(msg.content)) {
+          textContent = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+        }
+        setInput(textContent);
         // Truncate messages from this point
         const truncated = messages.slice(0, msgIndex);
         setMessages(truncated);
@@ -901,16 +922,34 @@
             return;
           }
         }
-        let userMsg = input.trim();
-        // Inject attached files as code blocks
-        if (attachedFiles.length) {
-          const fileBlocks = attachedFiles.map(f => {
+        const rawInput = input.trim();
+        const imageAttachments = attachedFiles.filter(f => f.type === 'image');
+        const textAttachments = attachedFiles.filter(f => f.type !== 'image');
+
+        // Build text portion: combine input + text file blocks
+        let textPortion = rawInput;
+        if (textAttachments.length) {
+          const fileBlocks = textAttachments.map(f => {
             const ext = f.name.split('.').pop();
             return `**[${f.name}]**\n\`\`\`${ext}\n${f.content}\n\`\`\``;
           }).join('\n\n');
-          userMsg = fileBlocks + (userMsg ? '\n\n' + userMsg : '');
-          setAttachedFiles([]);
+          textPortion = fileBlocks + (textPortion ? '\n\n' + textPortion : '');
         }
+
+        // If images attached: build multimodal content array
+        // Otherwise keep plain string (backward compatible)
+        let userMsg;
+        if (imageAttachments.length > 0) {
+          userMsg = [];
+          if (textPortion) userMsg.push({ type: 'text', text: textPortion });
+          for (const img of imageAttachments) {
+            userMsg.push({ type: 'image_url', image_url: { url: img.dataUrl } });
+          }
+        } else {
+          userMsg = textPortion;
+        }
+
+        if (attachedFiles.length) setAttachedFiles([]);
         setInput('');
 
         let convId = activeConvId;
@@ -1144,7 +1183,7 @@
                       ))
                     ) : (
                       models.map(m => (
-                        <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.id}</option>
+                        <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.vision ? '👁 ' : ''}{m.id}</option>
                       ))
                     )}
                     {models.length === 0 && <option value="">{chatSource === 'openrouter' ? 'Add API key in Settings' : 'No models available'}</option>}
@@ -1345,7 +1384,21 @@
                     {msg.role === 'user' ? (
                       <div className="relative group/user pl-10">
                         <div className="max-w-[520px] px-4 py-3 bg-gray-100 rounded-2xl rounded-br-sm">
-                          <p className="text-sm text-gray-900 whitespace-pre-wrap">{msg.content}</p>
+                          {Array.isArray(msg.content) ? (
+                            <div className="flex flex-col gap-2">
+                              {msg.content.map((part, pi) => {
+                                if (part.type === 'text' && part.text) {
+                                  return <p key={pi} className="text-sm text-gray-900 whitespace-pre-wrap">{part.text}</p>;
+                                }
+                                if (part.type === 'image_url' && part.image_url?.url) {
+                                  return <img key={pi} src={part.image_url.url} alt="attachment" className="max-w-full max-h-[300px] rounded-lg border border-gray-200 object-contain" />;
+                                }
+                                return null;
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-900 whitespace-pre-wrap">{msg.content}</p>
+                          )}
                         </div>
                         {!streaming && (
                           <button onClick={() => handleEdit(i)}
@@ -1460,21 +1513,46 @@
               <div className="max-w-[720px] mx-auto">
                 {/* File badges */}
                 {attachedFiles.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
                     {attachedFiles.map((f, fi) => (
-                      <div key={fi} className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1 text-xs text-indigo-600">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                        {f.name} <span className="text-indigo-400">({(f.size / 1024).toFixed(1)} KB)</span>
-                        <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))} className="text-indigo-400 hover:text-red-500 ml-0.5">×</button>
-                      </div>
+                      f.type === 'image' ? (
+                        <div key={fi} className="relative group/img rounded-lg overflow-hidden border border-indigo-200">
+                          <img src={f.dataUrl} alt={f.name} className="h-16 w-auto max-w-[140px] object-cover bg-gray-50" />
+                          <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))}
+                            className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-[10px] hover:bg-red-500 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                            title="Remove">×</button>
+                          <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/60 text-white text-[9px] truncate">
+                            {f.name} · {(f.size / 1024).toFixed(0)} KB
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={fi} className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1 text-xs text-indigo-600">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                          {f.name} <span className="text-indigo-400">({(f.size / 1024).toFixed(1)} KB)</span>
+                          <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))} className="text-indigo-400 hover:text-red-500 ml-0.5">×</button>
+                        </div>
+                      )
                     ))}
                     {attachedFiles.length > 1 && (
-                      <button onClick={() => setAttachedFiles([])} className="text-[10px] text-gray-400 hover:text-red-500">Remove all</button>
+                      <button onClick={() => setAttachedFiles([])} className="text-[10px] text-gray-400 hover:text-red-500 self-center">Remove all</button>
                     )}
                   </div>
                 )}
+                {/* Vision warning — image attached but model isn't vision-capable */}
+                {attachedFiles.some(f => f.type === 'image') && (() => {
+                  const currentModel = models.find(m => m.id === selectedModel);
+                  if (currentModel && !currentModel.vision && chatSource === 'exo') {
+                    return (
+                      <div className="mb-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-2">
+                        <span>⚠</span>
+                        <span>Current model doesn't support vision. Switch to a vision-capable model (Gemma, Qwen-VL) or the image will be ignored.</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
                 <div className="flex items-end gap-2.5 px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus-within:border-exo transition-colors">
-                  <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log" className="hidden" onChange={handleFileAttach} />
+                  <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log,image/*" className="hidden" onChange={handleFileAttach} />
                   <button onClick={() => fileInputRef.current?.click()} disabled={streaming}
                     className="text-gray-400 hover:text-gray-600 disabled:opacity-30 flex-shrink-0 pb-0.5" title="Attach files">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
