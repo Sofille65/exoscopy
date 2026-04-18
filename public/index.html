@@ -1167,8 +1167,28 @@
                   </div>
                 )}
                 {userRole === 'user' || userRole === 'guest' ? (
-                  <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-700 max-w-[350px]">
-                    {activeModel ? <><span className="text-emerald-500">⚡</span> {activeModel.split('/').pop()}</> : <span className="text-gray-400">No model loaded</span>}
+                  <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-700 max-w-[350px] flex items-center gap-1.5">
+                    {activeModel ? (() => {
+                      const modelInfo = models.find(m => m.id === activeModel);
+                      const isVision = !!modelInfo?.vision;
+                      return (
+                        <>
+                          {isVision ? (
+                            // ⊙ circled dot — vision-capable + active
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ffde00" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="9" />
+                              <circle cx="12" cy="12" r="2.5" fill="#ffde00" />
+                            </svg>
+                          ) : (
+                            // ◆ diamond — active non-vision
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="#ffde00" stroke="#ffde00" strokeWidth="1" strokeLinejoin="round">
+                              <path d="M12 2 L22 12 L12 22 L2 12 Z" />
+                            </svg>
+                          )}
+                          <span>{activeModel.split('/').pop()}</span>
+                        </>
+                      );
+                    })() : <span className="text-gray-400">No model loaded</span>}
                   </div>
                 ) : (
                   <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
@@ -1182,9 +1202,18 @@
                         </optgroup>
                       ))
                     ) : (
-                      models.map(m => (
-                        <option key={m.id} value={m.id}>{m.id === activeModel ? '⚡ ' : ''}{m.vision ? '👁 ' : ''}{m.id}</option>
-                      ))
+                      models.map(m => {
+                        const isActive = m.id === activeModel;
+                        const isVision = !!m.vision;
+                        // Marker: ⊙ for vision (active or not), ◆ for active non-vision
+                        // Yellow when active (ignored in Safari's native select popover)
+                        let marker = '';
+                        if (isActive && isVision) marker = '⊙ ';
+                        else if (isActive) marker = '◆ ';
+                        else if (isVision) marker = '⊙ ';
+                        const style = isActive ? { color: '#ffde00' } : undefined;
+                        return <option key={m.id} value={m.id} style={style}>{marker}{m.id}</option>;
+                      })
                     )}
                     {models.length === 0 && <option value="">{chatSource === 'openrouter' ? 'Add API key in Settings' : 'No models available'}</option>}
                   </select>
