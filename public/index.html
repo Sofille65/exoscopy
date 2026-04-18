@@ -23,6 +23,12 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
   <style>
     body { background: #f9fafb; color: #111827; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     ::-webkit-scrollbar { width: 6px; }
@@ -788,11 +794,69 @@
         setParams(prev => ({ ...prev, temperature: p.temperature, topP: p.topP, topK: p.topK, minP: p.minP, maxTokens: p.maxTokens, thinking: p.thinking }));
       }
 
-      // File attachments — images as base64 DataURL, text files as text
+      // Process a PDF file: extract text + rasterize each page to PNG
+      async function processPdf(file, placeholderId) {
+        const MAX_PAGES = 20;
+        const RENDER_SCALE = 1.5;
+        if (!window.pdfjsLib) throw new Error('PDF library not loaded');
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const totalPages = pdf.numPages;
+        const processedPages = Math.min(totalPages, MAX_PAGES);
+        const pages = [];
+
+        for (let i = 1; i <= processedPages; i++) {
+          // Update progress in placeholder
+          setAttachedFiles(prev => prev.map(f => f.id === placeholderId ? { ...f, progress: `${i}/${processedPages}` } : f));
+
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const text = textContent.items.map(item => item.str).join(' ').trim();
+
+          const viewport = page.getViewport({ scale: RENDER_SCALE });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const dataUrl = canvas.toDataURL('image/png');
+          pages.push({ pageNum: i, text, dataUrl });
+        }
+
+        return { totalPages, processedPages, pages };
+      }
+
+      // File attachments — images as base64 DataURL, PDFs as pages, text files as text
       function handleFileAttach(e) {
         const files = Array.from(e.target.files || []);
-        files.forEach(file => {
+        files.forEach(async (file) => {
           const isImage = file.type.startsWith('image/');
+          const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+          if (isPdf) {
+            const placeholderId = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            // Push a loading placeholder first
+            setAttachedFiles(prev => [...prev, {
+              id: placeholderId, name: file.name, type: 'pdf',
+              processing: true, progress: '0/?', size: file.size,
+            }]);
+            try {
+              const { totalPages, processedPages, pages } = await processPdf(file, placeholderId);
+              setAttachedFiles(prev => prev.map(f => f.id === placeholderId ? {
+                id: placeholderId, name: file.name, type: 'pdf', size: file.size,
+                totalPages, processedPages, pages,
+                thumbnail: pages[0]?.dataUrl,
+                truncated: totalPages > processedPages,
+              } : f));
+            } catch (err) {
+              console.error('PDF processing failed:', err);
+              setAttachedFiles(prev => prev.map(f => f.id === placeholderId ? {
+                id: placeholderId, name: file.name, type: 'pdf', error: err.message, size: file.size,
+              } : f));
+            }
+            return;
+          }
+
           const reader = new FileReader();
           reader.onload = (ev) => {
             if (isImage) {
@@ -924,7 +988,15 @@
         }
         const rawInput = input.trim();
         const imageAttachments = attachedFiles.filter(f => f.type === 'image');
-        const textAttachments = attachedFiles.filter(f => f.type !== 'image');
+        const pdfAttachments = attachedFiles.filter(f => f.type === 'pdf' && !f.processing && !f.error && f.pages);
+        const textAttachments = attachedFiles.filter(f => f.type === 'text');
+
+        // Guard: still processing PDFs
+        if (attachedFiles.some(f => f.type === 'pdf' && f.processing)) {
+          setChatWarning('A PDF is still being processed — please wait.');
+          setTimeout(() => setChatWarning(null), 4000);
+          return;
+        }
 
         // Build text portion: combine input + text file blocks
         let textPortion = rawInput;
@@ -936,14 +1008,24 @@
           textPortion = fileBlocks + (textPortion ? '\n\n' + textPortion : '');
         }
 
-        // If images attached: build multimodal content array
-        // Otherwise keep plain string (backward compatible)
+        // Build multimodal content when images or PDFs are attached
         let userMsg;
-        if (imageAttachments.length > 0) {
+        if (imageAttachments.length > 0 || pdfAttachments.length > 0) {
           userMsg = [];
           if (textPortion) userMsg.push({ type: 'text', text: textPortion });
+          // Standalone images
           for (const img of imageAttachments) {
             userMsg.push({ type: 'image_url', image_url: { url: img.dataUrl } });
+          }
+          // PDFs: interleave page text + page image per page
+          for (const pdf of pdfAttachments) {
+            userMsg.push({ type: 'text', text: `**[${pdf.name}] — ${pdf.processedPages} page${pdf.processedPages > 1 ? 's' : ''}${pdf.truncated ? ` (truncated from ${pdf.totalPages})` : ''}**` });
+            for (const page of pdf.pages) {
+              if (page.text) {
+                userMsg.push({ type: 'text', text: `Page ${page.pageNum}:\n${page.text}` });
+              }
+              userMsg.push({ type: 'image_url', image_url: { url: page.dataUrl } });
+            }
           }
         } else {
           userMsg = textPortion;
@@ -1514,45 +1596,82 @@
                 {/* File badges */}
                 {attachedFiles.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 mb-2">
-                    {attachedFiles.map((f, fi) => (
-                      f.type === 'image' ? (
-                        <div key={fi} className="relative group/img rounded-lg overflow-hidden border border-indigo-200">
-                          <img src={f.dataUrl} alt={f.name} className="h-16 w-auto max-w-[140px] object-cover bg-gray-50" />
-                          <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))}
-                            className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-[10px] hover:bg-red-500 opacity-0 group-hover/img:opacity-100 transition-opacity"
-                            title="Remove">×</button>
-                          <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/60 text-white text-[9px] truncate">
-                            {f.name} · {(f.size / 1024).toFixed(0)} KB
+                    {attachedFiles.map((f, fi) => {
+                      if (f.type === 'image') {
+                        return (
+                          <div key={fi} className="relative group/img rounded-lg overflow-hidden border border-indigo-200">
+                            <img src={f.dataUrl} alt={f.name} className="h-16 w-auto max-w-[140px] object-cover bg-gray-50" />
+                            <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))}
+                              className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-[10px] hover:bg-red-500 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                              title="Remove">×</button>
+                            <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/60 text-white text-[9px] truncate">
+                              {f.name} · {(f.size / 1024).toFixed(0)} KB
+                            </div>
                           </div>
-                        </div>
-                      ) : (
+                        );
+                      }
+                      if (f.type === 'pdf') {
+                        return (
+                          <div key={fi} className="relative group/pdf rounded-lg overflow-hidden border border-rose-200 bg-rose-50">
+                            {f.processing ? (
+                              <div className="h-16 w-[140px] flex flex-col items-center justify-center gap-1 px-2">
+                                <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e11d48" strokeWidth="2.5" strokeLinecap="round">
+                                  <path d="M21 12a9 9 0 11-6.219-8.56" />
+                                </svg>
+                                <span className="text-[10px] text-rose-600 font-medium">Page {f.progress}</span>
+                              </div>
+                            ) : f.error ? (
+                              <div className="h-16 w-[160px] flex flex-col items-center justify-center gap-1 px-2">
+                                <span className="text-xs text-red-500">⚠ Failed</span>
+                                <span className="text-[9px] text-red-400 truncate max-w-full" title={f.error}>{f.name}</span>
+                              </div>
+                            ) : (
+                              <>
+                                {f.thumbnail ? (
+                                  <img src={f.thumbnail} alt={f.name} className="h-16 w-auto max-w-[140px] object-cover bg-white" />
+                                ) : (
+                                  <div className="h-16 w-[140px] flex items-center justify-center text-rose-400 text-2xl">PDF</div>
+                                )}
+                                <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-rose-900/70 text-white text-[9px] truncate">
+                                  {f.name} · {f.processedPages}p{f.truncated ? ` (of ${f.totalPages})` : ''}
+                                </div>
+                              </>
+                            )}
+                            <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))}
+                              className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-[10px] hover:bg-red-500 opacity-0 group-hover/pdf:opacity-100 transition-opacity"
+                              title="Remove">×</button>
+                          </div>
+                        );
+                      }
+                      // Text file
+                      return (
                         <div key={fi} className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1 text-xs text-indigo-600">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                           {f.name} <span className="text-indigo-400">({(f.size / 1024).toFixed(1)} KB)</span>
                           <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== fi))} className="text-indigo-400 hover:text-red-500 ml-0.5">×</button>
                         </div>
-                      )
-                    ))}
+                      );
+                    })}
                     {attachedFiles.length > 1 && (
                       <button onClick={() => setAttachedFiles([])} className="text-[10px] text-gray-400 hover:text-red-500 self-center">Remove all</button>
                     )}
                   </div>
                 )}
-                {/* Vision warning — image attached but model isn't vision-capable */}
-                {attachedFiles.some(f => f.type === 'image') && (() => {
+                {/* Vision warning — image/PDF attached but model isn't vision-capable */}
+                {attachedFiles.some(f => f.type === 'image' || f.type === 'pdf') && (() => {
                   const currentModel = models.find(m => m.id === selectedModel);
                   if (currentModel && !currentModel.vision && chatSource === 'exo') {
                     return (
                       <div className="mb-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-2">
                         <span>⚠</span>
-                        <span>Current model doesn't support vision. Switch to a vision-capable model (Gemma, Qwen-VL) or the image will be ignored.</span>
+                        <span>Current model doesn't support vision. Switch to a vision-capable model (Gemma, Qwen-VL) or the images will be ignored.</span>
                       </div>
                     );
                   }
                   return null;
                 })()}
                 <div className="flex items-end gap-2.5 px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus-within:border-exo transition-colors">
-                  <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log,image/*" className="hidden" onChange={handleFileAttach} />
+                  <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.py,.js,.ts,.jsx,.tsx,.csv,.yaml,.yml,.toml,.sh,.html,.css,.xml,.log,.pdf,image/*,application/pdf" className="hidden" onChange={handleFileAttach} />
                   <button onClick={() => fileInputRef.current?.click()} disabled={streaming}
                     className="text-gray-400 hover:text-gray-600 disabled:opacity-30 flex-shrink-0 pb-0.5" title="Attach files">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
@@ -1568,7 +1687,7 @@
                   {streaming ? (
                     <button onClick={stopStreaming} className="px-4 py-1.5 bg-red-500 text-white text-[13px] font-semibold rounded-lg hover:bg-red-600 transition-colors">Stop</button>
                   ) : (
-                    <button onClick={handleSend} disabled={!input.trim() && !attachedFiles.length} className="px-4 py-1.5 bg-exo text-gray-900 text-[13px] font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40 disabled:cursor-not-allowed">Send</button>
+                    <button onClick={handleSend} disabled={(!input.trim() && !attachedFiles.length) || attachedFiles.some(f => f.type === 'pdf' && f.processing)} className="px-4 py-1.5 bg-exo text-gray-900 text-[13px] font-semibold rounded-lg hover:brightness-95 transition disabled:opacity-40 disabled:cursor-not-allowed">Send</button>
                   )}
                 </div>
               </div>
