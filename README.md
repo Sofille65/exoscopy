@@ -4,7 +4,7 @@
 
 Web dashboard for [exo](https://github.com/exo-explore/exo) — the open-source distributed Apple Silicon inference framework.
 
-![ExoScopy](https://img.shields.io/badge/version-1.12.0-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
+![ExoScopy](https://img.shields.io/badge/version-1.12.1-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
