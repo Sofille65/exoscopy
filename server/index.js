@@ -682,14 +682,16 @@ app.get('/api/models/matrix', async (req, res) => {
       .map(([id, sizeBytes]) => ({ id, sizeBytes }))
       .sort((a, b) => b.sizeBytes - a.sizeBytes);
 
-    // Get active model
-    let activeModel = null;
+    // Get all active models (exo v1.0.70+ can run multiple instances in parallel)
+    const activeModelsList = [];
     const instances = state.instances || {};
     for (const inst of Object.values(instances)) {
       const wrapperKey = Object.keys(inst).find(k => k.endsWith('Instance'));
       const inner = wrapperKey ? inst[wrapperKey] : inst;
-      if (inner?.shardAssignments?.modelId) { activeModel = inner.shardAssignments.modelId; break; }
+      const modelId = inner?.shardAssignments?.modelId;
+      if (modelId && !activeModelsList.includes(modelId)) activeModelsList.push(modelId);
     }
+    const activeModel = activeModelsList[0] || null; // backward compat
 
     // Get disk info per node
     const nodeDisk = state.nodeDisk || {};
@@ -710,6 +712,7 @@ app.get('/api/models/matrix', async (req, res) => {
       models: modelList,
       matrix: nodeModels,
       activeModel,
+      activeModels: activeModelsList,
       diskInfo,
     });
   } catch (e) {
