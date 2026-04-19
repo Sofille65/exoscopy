@@ -4,16 +4,18 @@
 
 Web dashboard for [exo](https://github.com/exo-explore/exo) — the open-source distributed Apple Silicon inference framework.
 
-![ExoScopy](https://img.shields.io/badge/version-1.4.3-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
+![ExoScopy](https://img.shields.io/badge/version-1.12.0-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
 - **Chat** — stream responses with presets, file attachments, multi-turn editing, thinking mode, system prompts, stats, code block save
+- **Multimodal inference** — attach **images** or **PDFs** and use vision-capable models (Gemma 4, Qwen3-VL, Kimi K2.5). PDF text + page rasterization happens client-side, fully offline. Requires exo v1.0.70+.
 - **Dashboard** — model matrix across nodes, load/unload, sync via rsync, delete, cluster monitoring (RAM, GPU, temp, SSD)
 - **Downloads** — search HuggingFace (exo qualified MLX models), smart cross-filters, distributed download (auto-rsync to all nodes)
 - **Settings** — node discovery, SSH key setup, config check (8 dependencies per node), endpoint test
 - **Multi-user** — administrator mode with login, per-user conversations, role-based access (admin/user/guest)
 - **Guest mode** — token-limited guest access for visitors, no login required
+- **Self-contained** — all UI dependencies (React, Tailwind, PDF parser) bundled in the Docker image. **No CDN calls at runtime**, works on air-gapped networks.
 
 ---
 
@@ -186,12 +188,15 @@ Browser → ExoScopy (:3456) → exo cluster (:52415)
 | Component | Tech |
 |-----------|------|
 | Backend | Node.js 20 + Express + Socket.IO |
-| Frontend | React 18 (Babel in-browser) + Tailwind CDN |
+| Frontend | React 18 + Tailwind + Babel (all self-hosted in `public/vendor/`) |
+| PDF | pdf.js 3.11.174 (client-side text extraction + rasterization) |
 | Auth | bcryptjs + cookie-session (signed cookies, no server-side store) |
 | Build | None — single `index.html`, no webpack/vite |
 | Persistence | JSON files in `data/` (Docker volume) |
 | Node comms | HTTP (exo API) + SSH (rsync, metrics, delete) |
 | Docker | `node:20-alpine` + openssh + sshpass + rsync |
+
+All frontend libraries are **bundled in the Docker image** under `public/vendor/` (~5 MB total). ExoScopy makes zero external network calls at runtime — safe for air-gapped or locked-down networks.
 
 ### Data Storage
 
@@ -224,6 +229,9 @@ data/
 | White screen | Check browser console for errors — try hard refresh (Cmd+Shift+R) |
 | 401 after update | Admin mode is ON — log in, or disable admin mode via Settings |
 | SSH keys lost after update | Normal — re-run **Setup SSH Keys** in Settings after every container update |
+| "Current model doesn't support vision" warning | Select a vision-capable model (👁 in dropdown) — Gemma 4, Qwen3-VL, Kimi K2.5 — or remove the image/PDF attachment |
+| PDF stuck on "Processing…" | Browser is extracting text and rasterizing pages. Expect ~500ms per page. Encrypted PDFs are not supported. |
+| Vision models not appearing | Update exo to v1.0.70+ on your cluster; models need `capabilities: ["vision"]` in their manifest |
 
 ---
 
