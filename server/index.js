@@ -755,17 +755,16 @@ app.get('/api/monitoring/exo-load-status', async (req, res) => {
     clearTimeout(timer);
     const data = await r.json();
 
-    // Find active instance and model
-    let activeModel = null;
-    let instanceId = null;
+    // Collect ALL active instances (exo v1.0.70+ can run several in parallel)
+    const activeInstances = [];
     for (const [iid, inst] of Object.entries(data.instances || {})) {
       const inner = inst.MlxJacclInstance || inst.MlxRingInstance || inst.MlxInstance || Object.values(inst)[0];
       const modelId = inner?.shardAssignments?.modelId;
-      if (modelId) { activeModel = modelId; instanceId = iid; break; }
+      if (modelId) activeInstances.push({ instanceId: iid, model: modelId });
     }
-    if (!activeModel) return res.json({ status: 'idle', model: null });
+    if (activeInstances.length === 0) return res.json({ status: 'idle', model: null, models: [], instances: [] });
 
-    // Count runners for this instance
+    // Aggregate runner counts (global, not per-instance — exo doesn't expose a clean runner↔instance map)
     const runners = data.runners || {};
     let readyCount = 0;
     let totalCount = 0;
@@ -774,11 +773,11 @@ app.get('/api/monitoring/exo-load-status', async (req, res) => {
       if (!runner.RunnerShuttingDown) totalCount++;
     }
 
-    // Check if there are still-running CreateRunner tasks for this instance
+    // Count still-running CreateRunner tasks (any instance)
     let loadingTasks = 0;
     for (const task of Object.values(data.tasks || {})) {
       const cr = task.CreateRunner;
-      if (cr && cr.instanceId === instanceId && cr.taskStatus === 'Running') loadingTasks++;
+      if (cr && cr.taskStatus === 'Running') loadingTasks++;
     }
 
     let status;
@@ -792,7 +791,16 @@ app.get('/api/monitoring/exo-load-status', async (req, res) => {
       status = 'loading';
     }
 
-    res.json({ status, model: activeModel, instanceId, readyRunners: readyCount, totalRunners: totalCount, loadingTasks });
+    res.json({
+      status,
+      model: activeInstances[0]?.model || null, // backward compat
+      models: activeInstances.map(a => a.model),
+      instances: activeInstances,
+      instanceId: activeInstances[0]?.instanceId || null,
+      readyRunners: readyCount,
+      totalRunners: totalCount,
+      loadingTasks,
+    });
   } catch (e) {
     res.json({ status: 'idle', model: null });
   }

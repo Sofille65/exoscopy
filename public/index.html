@@ -1843,7 +1843,7 @@
           if (d.status === 'idle') {
             setLoadStatus(null);
           } else {
-            setLoadStatus({ status: d.status, model: d.model, readyRunners: d.readyRunners, totalRunners: d.totalRunners, loadingTasks: d.loadingTasks });
+            setLoadStatus({ status: d.status, model: d.model, models: d.models || (d.model ? [d.model] : []), readyRunners: d.readyRunners, totalRunners: d.totalRunners, loadingTasks: d.loadingTasks });
           }
         }).catch(() => {});
       }
@@ -1907,27 +1907,43 @@
             loadStatus?.status === 'loading' ? 'bg-amber-50 border border-amber-200' :
             'bg-gray-50 border border-gray-200'
           }`}>
-            {loadStatus?.status === 'running' ? (
-              <>
-                <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span className="text-[13px] font-semibold text-emerald-600">Running</span>
-                <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-              </>
-            ) : loadStatus?.status === 'warming' ? (
-              <>
-                <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                <span className="text-[13px] font-semibold text-blue-600">Warming up...</span>
-                <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-              </>
-            ) : loadStatus?.status === 'loading' ? (
-              <>
-                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <span className="text-[13px] font-semibold text-amber-600">Loading...</span>
-                <span className="mono text-xs text-gray-700">{loadStatus.model}</span>
-              </>
-            ) : (
-              <span className="text-[13px] text-gray-500">No model loaded</span>
-            )}
+            {(() => {
+              const activeList = loadStatus?.models?.length ? loadStatus.models : (loadStatus?.model ? [loadStatus.model] : []);
+              if (loadStatus?.status === 'running') {
+                return <>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                  <span className="text-[13px] font-semibold text-emerald-600 flex-shrink-0">Running</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeList.map(m => (
+                      <span key={m} className="mono text-[11px] text-emerald-700 bg-white border border-emerald-200 rounded-md px-2 py-0.5">{m}</span>
+                    ))}
+                  </div>
+                </>;
+              }
+              if (loadStatus?.status === 'warming') {
+                return <>
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
+                  <span className="text-[13px] font-semibold text-blue-600 flex-shrink-0">Warming up…</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeList.map(m => (
+                      <span key={m} className="mono text-[11px] text-blue-700 bg-white border border-blue-200 rounded-md px-2 py-0.5">{m}</span>
+                    ))}
+                  </div>
+                </>;
+              }
+              if (loadStatus?.status === 'loading') {
+                return <>
+                  <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+                  <span className="text-[13px] font-semibold text-amber-600 flex-shrink-0">Loading…</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeList.map(m => (
+                      <span key={m} className="mono text-[11px] text-amber-700 bg-white border border-amber-200 rounded-md px-2 py-0.5">{m}</span>
+                    ))}
+                  </div>
+                </>;
+              }
+              return <span className="text-[13px] text-gray-500">No model loaded</span>;
+            })()}
             <div className="flex-1" />
             <a href={clusterStatus?.dashboardURL || '#'} target="_blank" rel="noopener"
               className="flex items-center gap-2 px-4 py-1.5 bg-exo rounded-lg text-[11px] font-semibold text-gray-900 hover:brightness-95 transition">
