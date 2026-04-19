@@ -1463,13 +1463,29 @@ app.get('/api/chat/models', async (req, res) => {
     clearTimeout(timer);
     if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
     const data = await r.json();
+    // Fallback vision detection from known model name patterns.
+    // exo v1.0.70+ tags capabilities, but not always correctly (e.g. Gemma 4).
+    const visionFromName = (id) => {
+      const s = (id || '').toLowerCase();
+      return (
+        s.includes('vision') ||
+        s.includes('-vl-') || s.endsWith('-vl') || s.includes('/vl-') || s.includes('qwenvl') ||
+        s.includes('llava') ||
+        s.includes('gemma-4') || s.includes('gemma4') ||
+        s.includes('kimi-k2.5') || s.includes('kimi-vl') ||
+        s.includes('qwen3-vl') || s.includes('qwen-vl') ||
+        s.includes('internvl') || s.includes('intern-vl') ||
+        s.includes('pixtral') || s.includes('molmo')
+      );
+    };
+
     const models = (data.data || [])
       .filter(m => ![...deletedModels].some(d => d.startsWith(`${m.id}::`)))
       .sort((a, b) => a.id.localeCompare(b.id))
       .map(m => ({
         id: m.id, name: m.id, family: m.family, quantization: m.quantization,
         capabilities: m.capabilities || [],
-        vision: (m.capabilities || []).includes('vision') || !!m.vision,
+        vision: (m.capabilities || []).includes('vision') || !!m.vision || visionFromName(m.id),
       }));
     res.json({ engine, models });
   } catch (e) {
