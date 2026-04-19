@@ -1400,11 +1400,11 @@ app.get('/api/chat/engines', (req, res) => {
   res.json(engines);
 });
 
-// GET /api/chat/active-model?engine=exo1|exo2 — currently loaded model via /state
+// GET /api/chat/active-model?engine=exo1|exo2 — currently loaded model(s) via /state
 app.get('/api/chat/active-model', async (req, res) => {
   const engine = req.query.engine || 'exo1';
   const eng    = getChatEndpoint(engine);
-  if (!eng || eng.type !== 'exo') return res.json({ activeModel: null });
+  if (!eng || eng.type !== 'exo') return res.json({ activeModel: null, activeModels: [] });
 
   try {
     const controller = new AbortController();
@@ -1413,15 +1413,16 @@ app.get('/api/chat/active-model', async (req, res) => {
     clearTimeout(timer);
     const data = await r.json();
 
-    let activeModel = null;
+    const activeModels = [];
     for (const inst of Object.values(data.instances || {})) {
       const inner   = inst.MlxJacclInstance || inst.MlxInstance || Object.values(inst)[0];
       const modelId = inner?.shardAssignments?.modelId;
-      if (modelId) { activeModel = modelId; break; }
+      if (modelId && !activeModels.includes(modelId)) activeModels.push(modelId);
     }
-    res.json({ activeModel });
+    // Backward-compat: activeModel = first one
+    res.json({ activeModel: activeModels[0] || null, activeModels });
   } catch (e) {
-    res.json({ activeModel: null });
+    res.json({ activeModel: null, activeModels: [] });
   }
 });
 
