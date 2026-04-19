@@ -581,6 +581,7 @@
       const [params, setParams] = useState({ temperature: 0.7, maxTokens: 32768, thinking: false, reasoningEffort: 'medium', topP: null, topK: null, minP: null, repPenalty: null, seed: null });
       const [toolsEnabled, setToolsEnabled] = useState(() => localStorage.getItem('exoscopy-tools-enabled') === 'true');
       useEffect(() => { localStorage.setItem('exoscopy-tools-enabled', toolsEnabled); }, [toolsEnabled]);
+      const [hideMultimodalInfo, setHideMultimodalInfo] = useState(() => localStorage.getItem('exoscopy-hide-multimodal-info') === '1');
       const [activeToolStatus, setActiveToolStatus] = useState(null); // { tool, args } or null
       const [systemPrompt, setSystemPrompt] = useState('');
       const [systemPromptEnabled, setSystemPromptEnabled] = useState(false);
@@ -1233,6 +1234,19 @@
                 <div className="text-center py-8 text-gray-400 text-sm">No conversations yet</div>
               )}
             </div>
+
+            {/* Multimodal info box (dismissible) */}
+            {!hideMultimodalInfo && (
+              <div className="mx-3 mb-3 mt-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg relative">
+                <button onClick={() => { setHideMultimodalInfo(true); localStorage.setItem('exoscopy-hide-multimodal-info', '1'); }}
+                  className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-700 text-[11px]"
+                  title="Dismiss">×</button>
+                <div className="text-[11px] text-gray-700 leading-relaxed pr-3">
+                  <span className="font-semibold text-gray-900">Multimodal inference</span>
+                  <br />Attach images or PDFs when using a vision model (Gemma, Qwen-VL, Kimi-VL). Requires exo v1.0.70+ on your cluster — see Help for details.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Chat area */}
