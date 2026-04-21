@@ -413,6 +413,13 @@
       _notifyAll() { this._listeners.forEach(fn => fn(this._speaking)); },
     };
 
+    // Strip the HF namespace prefix — "mlx-community/gemma-4-31b" → "gemma-4-31b"
+    function displayModelName(id) {
+      if (!id) return '';
+      const parts = id.split('/');
+      return parts.length > 1 ? parts.slice(1).join('/') : id;
+    }
+
     function formatBytes(bytes) {
       if (!bytes || bytes === 0) return '—';
       if (bytes < 1073741824) return `${Math.round(bytes / 1048576)} MB`;
@@ -1301,76 +1308,90 @@
 
           {/* Chat area */}
           <div className="flex-1 flex flex-col bg-[#f9fafb]">
-            {/* Chat header */}
-            <div className="flex items-center justify-between gap-2 px-4 md:px-6 py-2 md:py-3 bg-white border-b border-gray-200 flex-shrink-0">
-              <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
-                {/* Source toggle: exo / openrouter (only show if API key configured) */}
-                {settings?.openRouterApiKey && (
-                  <div className="flex border border-gray-200 rounded-lg overflow-hidden mr-1">
-                    <button onClick={() => setChatSource('exo')}
-                      className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'exo' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-400 hover:bg-gray-50'}`}>EXO</button>
-                    <button onClick={() => setChatSource('openrouter')}
-                      className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'openrouter' ? 'bg-indigo-100 font-semibold text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}>Cloud</button>
-                  </div>
-                )}
-                {chatSource === 'openrouter' ? (
-                  // OpenRouter: full grouped list (loading/unloading is on-demand, no "active" concept)
-                  <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
-                    className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-full md:max-w-[350px]">
-                    {modelGroups ? (
-                      Object.entries(modelGroups).sort(([a],[b]) => a.localeCompare(b)).map(([group, gModels]) => (
-                        <optgroup key={group} label={group.charAt(0).toUpperCase() + group.slice(1)}>
-                          {gModels.map(m => (
-                            <option key={m.id} value={m.id}>{m.id.split('/').slice(1).join('/')}</option>
-                          ))}
-                        </optgroup>
-                      ))
-                    ) : null}
-                    {models.length === 0 && <option value="">Add API key in Settings</option>}
-                  </select>
-                ) : (
-                  // EXO: only show loaded (ready) models. To load/unload → exo Dashboard.
-                  activeModels.length === 0 ? (
-                    <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-400 max-w-full md:max-w-[350px]">
-                      No model loaded — use exo Dashboard to load one
-                    </div>
-                  ) : (
-                    <select value={activeModels.includes(selectedModel) ? selectedModel : activeModels[0]}
-                      onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
-                      className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-full md:max-w-[350px]">
-                      {activeModels.map(id => {
-                        const m = models.find(mm => mm.id === id);
-                        return <option key={id} value={id}>⚡ {m?.vision ? '👁 ' : ''}{id}</option>;
-                      })}
-                    </select>
-                  )
-                )}
-              </div>
-              {!isMobile && <div className="flex items-center gap-2">
-                <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+            {/* Chat header — factored pieces, different layouts on mobile vs desktop */}
+            {(() => {
+              const sourceToggle = settings?.openRouterApiKey && (
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden flex-shrink-0">
+                  <button onClick={() => setChatSource('exo')}
+                    className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'exo' ? 'bg-exo font-semibold text-gray-900' : 'text-gray-400 hover:bg-gray-50'}`}>EXO</button>
+                  <button onClick={() => setChatSource('openrouter')}
+                    className={`px-2 py-1 text-[10px] font-medium ${chatSource === 'openrouter' ? 'bg-indigo-100 font-semibold text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}>Cloud</button>
+                </div>
+              );
+
+              const modelPicker = chatSource === 'openrouter' ? (
+                <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
+                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none w-full md:max-w-[350px]">
+                  {modelGroups ? (
+                    Object.entries(modelGroups).sort(([a],[b]) => a.localeCompare(b)).map(([group, gModels]) => (
+                      <optgroup key={group} label={group.charAt(0).toUpperCase() + group.slice(1)}>
+                        {gModels.map(m => (
+                          <option key={m.id} value={m.id}>{displayModelName(m.id)}</option>
+                        ))}
+                      </optgroup>
+                    ))
+                  ) : null}
+                  {models.length === 0 && <option value="">Add API key in Settings</option>}
+                </select>
+              ) : (activeModels.length === 0 ? (
+                <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-400 w-full md:max-w-[350px]">
+                  No model loaded — use exo Dashboard to load one
+                </div>
+              ) : (
+                <select value={activeModels.includes(selectedModel) ? selectedModel : activeModels[0]}
+                  onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
+                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none w-full md:max-w-[350px]">
+                  {activeModels.map(id => {
+                    const m = models.find(mm => mm.id === id);
+                    return <option key={id} value={id}>⚡ {m?.vision ? '👁 ' : ''}{displayModelName(id)}</option>;
+                  })}
+                </select>
+              ));
+
+              const presetButtons = (
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden flex-shrink-0">
                   {['creative', 'normal', 'code'].map(p => (
                     <button key={p} onClick={() => applyPreset(p)}
-                      className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                      className={`px-2.5 md:px-3 py-1 text-[11px] md:text-xs font-medium capitalize transition-colors ${
                         preset === p ? 'bg-exo text-gray-900 font-semibold' : 'text-gray-500 hover:bg-gray-50'
                       }`}>{p === 'creative' ? 'Creative' : p === 'normal' ? 'Normal' : 'Code'}</button>
                   ))}
                 </div>
+              );
+
+              const inferenceSettingsBtn = (
                 <button onClick={() => setShowSettings(!showSettings)}
                   className={`px-2.5 py-1 border rounded-lg text-xs font-medium transition-colors ${showSettings ? 'border-exo bg-exo/10 text-gray-900' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
                   ⚙ Inference Settings
                 </button>
-              </div>}
-              {isMobile && (
-                <div className="flex items-center gap-1">
-                  {['creative', 'normal', 'code'].map(p => (
-                    <button key={p} onClick={() => applyPreset(p)}
-                      className={`px-2 py-0.5 text-[10px] font-medium capitalize rounded transition-colors ${
-                        preset === p ? 'bg-exo text-gray-900 font-semibold' : 'text-gray-400'
-                      }`}>{p.charAt(0).toUpperCase()}</button>
-                  ))}
+              );
+
+              if (isMobile) {
+                // Mobile: 2 rows — buttons on top, model picker below
+                return (
+                  <div className="flex flex-col gap-2 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
+                    <div className="flex items-center gap-2 justify-between">
+                      {sourceToggle || <div />}
+                      {presetButtons}
+                    </div>
+                    <div className="w-full">{modelPicker}</div>
+                  </div>
+                );
+              }
+              // Desktop: single row, justify-between
+              return (
+                <div className="flex items-center justify-between gap-2 px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {sourceToggle}
+                    {modelPicker}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {presetButtons}
+                    {inferenceSettingsBtn}
+                  </div>
                 </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* Inference Settings Panel */}
             {showSettings && (
@@ -1972,7 +1993,7 @@
                   <span className="text-[13px] font-semibold text-emerald-600 flex-shrink-0">Running</span>
                   <div className="flex flex-wrap gap-1.5">
                     {activeList.map(m => (
-                      <span key={m} className="mono text-[11px] text-emerald-700 bg-white border border-emerald-200 rounded-md px-2 py-0.5">{m}</span>
+                      <span key={m} className="mono text-[11px] text-emerald-700 bg-white border border-emerald-200 rounded-md px-2 py-0.5">{displayModelName(m)}</span>
                     ))}
                   </div>
                 </>;
@@ -1983,7 +2004,7 @@
                   <span className="text-[13px] font-semibold text-blue-600 flex-shrink-0">Warming up…</span>
                   <div className="flex flex-wrap gap-1.5">
                     {activeList.map(m => (
-                      <span key={m} className="mono text-[11px] text-blue-700 bg-white border border-blue-200 rounded-md px-2 py-0.5">{m}</span>
+                      <span key={m} className="mono text-[11px] text-blue-700 bg-white border border-blue-200 rounded-md px-2 py-0.5">{displayModelName(m)}</span>
                     ))}
                   </div>
                 </>;
@@ -1994,7 +2015,7 @@
                   <span className="text-[13px] font-semibold text-amber-600 flex-shrink-0">Loading…</span>
                   <div className="flex flex-wrap gap-1.5">
                     {activeList.map(m => (
-                      <span key={m} className="mono text-[11px] text-amber-700 bg-white border border-amber-200 rounded-md px-2 py-0.5">{m}</span>
+                      <span key={m} className="mono text-[11px] text-amber-700 bg-white border border-amber-200 rounded-md px-2 py-0.5">{displayModelName(m)}</span>
                     ))}
                   </div>
                 </>;
