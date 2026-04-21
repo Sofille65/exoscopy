@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>ExoScopy</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#ffde00" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="ExoScopy" />
+  <link rel="apple-touch-icon" href="logo.png" />
   <!-- All vendor libs self-hosted in /vendor/ — works offline, no CDN dependency -->
   <script src="vendor/tailwind.min.js"></script>
   <script>
@@ -66,6 +73,19 @@
   <div id="root"></div>
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Responsive hook — detects mobile viewport (< 768px)
+    // ═══════════════════════════════════════════════════════════════════
+    function useIsMobile(breakpoint = 768) {
+      const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener('resize', handler);
+        return () => window.removeEventListener('resize', handler);
+      }, [breakpoint]);
+      return isMobile;
+    }
     const socket = io();
 
     // ═══════════════════════════════════════════════════════════════════
@@ -499,6 +519,8 @@
                     allPages;
       const onlineCount = clusterStatus?.nodes?.filter(n => n.online)?.length || 0;
       const totalCount = clusterStatus?.nodes?.length || 0;
+      const isMobile = useIsMobile();
+      if (isMobile) return null; // NavBar hidden on mobile — mobile uses per-page headers
 
       return (
         <div className="flex items-center justify-between px-6 h-[52px] bg-white border-b border-gray-200 flex-shrink-0">
@@ -1130,11 +1152,36 @@
       }
 
       const showProjectModal = showNewProject || editingProject;
+      const isMobile = useIsMobile();
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      useEffect(() => { if (!isMobile) setDrawerOpen(false); }, [isMobile]);
+      useEffect(() => { if (isMobile && activeConvId) setDrawerOpen(false); }, [activeConvId, isMobile]);
 
       return (
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <div className="w-[240px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden relative">
+          {/* Mobile header (shown only on mobile) */}
+          {isMobile && (
+            <div className="flex items-center justify-between px-4 h-14 bg-white border-b border-gray-200 flex-shrink-0 z-10">
+              <button onClick={() => setDrawerOpen(true)} className="w-9 h-9 flex items-center justify-center" title="Conversations">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+              </button>
+              <div className="flex items-center gap-2">
+                <img src="logo.png" alt="" className="w-5 h-5" />
+                <span className="text-[15px] font-bold text-gray-900 tracking-tight">ExoScopy</span>
+              </div>
+              <button onClick={() => window.dispatchEvent(new CustomEvent('exoscopy-go-settings'))} className="w-9 h-9 flex items-center justify-center" title="Settings">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
+            </div>
+          )}
+
+          {/* Backdrop for mobile drawer */}
+          {isMobile && drawerOpen && (
+            <div onClick={() => setDrawerOpen(false)} className="fixed inset-0 bg-black/40 z-40" />
+          )}
+
+          {/* Sidebar — fixed on desktop, drawer on mobile */}
+          <div className={`${isMobile ? `fixed inset-y-0 left-0 w-[280px] z-50 transform transition-transform duration-200 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}` : 'w-[240px] flex-shrink-0'} bg-white border-r border-gray-200 flex flex-col`}>
             <div className="p-4 pb-3 flex flex-col gap-2.5">
               <div className="flex items-center gap-2 px-2.5 py-[7px] bg-gray-100 rounded-lg">
                 <span className="text-[13px] text-gray-400">🔍</span>
@@ -1255,7 +1302,7 @@
           {/* Chat area */}
           <div className="flex-1 flex flex-col bg-[#f9fafb]">
             {/* Chat header */}
-            <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+            <div className="flex items-center justify-between px-4 md:px-6 py-2 md:py-3 bg-white border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-3">
                 {/* Source toggle: exo / openrouter (only show if API key configured) */}
                 {settings?.openRouterApiKey && (
@@ -1299,7 +1346,7 @@
                   )
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              {!isMobile && <div className="flex items-center gap-2">
                 <div className="flex border border-gray-200 rounded-lg overflow-hidden">
                   {['creative', 'normal', 'code'].map(p => (
                     <button key={p} onClick={() => applyPreset(p)}
@@ -1312,7 +1359,17 @@
                   className={`px-2.5 py-1 border rounded-lg text-xs font-medium transition-colors ${showSettings ? 'border-exo bg-exo/10 text-gray-900' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
                   ⚙ Inference Settings
                 </button>
-              </div>
+              </div>}
+              {isMobile && (
+                <div className="flex items-center gap-1">
+                  {['creative', 'normal', 'code'].map(p => (
+                    <button key={p} onClick={() => applyPreset(p)}
+                      className={`px-2 py-0.5 text-[10px] font-medium capitalize rounded transition-colors ${
+                        preset === p ? 'bg-exo text-gray-900 font-semibold' : 'text-gray-400'
+                      }`}>{p.charAt(0).toUpperCase()}</button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Inference Settings Panel */}
@@ -2840,13 +2897,31 @@
         setTimeout(() => setTestResult(null), 5000);
       }
 
-      return (
-        <div className="flex-1 flex gap-8 px-10 py-5 overflow-y-auto">
-          <div className="flex-1 flex flex-col gap-7">
-            <span className="text-[22px] font-bold text-gray-900">Settings</span>
+      const isMobile = useIsMobile();
 
-            {/* EXO Nodes */}
-            <div className="flex flex-col gap-3">
+      return (
+        <div className="flex-1 flex flex-col md:flex-row md:gap-8 md:px-10 md:py-5 overflow-y-auto">
+          {/* Mobile header (shown only on mobile) */}
+          {isMobile && (
+            <div className="flex items-center px-4 h-14 bg-white border-b border-gray-200 flex-shrink-0 sticky top-0 z-10">
+              <button onClick={() => window.dispatchEvent(new CustomEvent('exoscopy-go-chat'))} className="w-9 h-9 flex items-center justify-center -ml-2" title="Back">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#111827" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span className="text-[18px] font-bold text-gray-900 ml-1 flex-1 tracking-tight">Settings</span>
+              {authState?.user && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                  <span className="text-xs font-semibold text-gray-700">{authState.user.username}</span>
+                  <span className={`text-[9px] font-semibold uppercase tracking-wider ${authState.user.role === 'admin' ? 'text-violet-500' : authState.user.role === 'organizer' ? 'text-amber-600' : 'text-cyan-600'}`}>{authState.user.role}</span>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex-1 flex flex-col gap-7 px-4 py-4 md:px-0 md:py-0">
+            {!isMobile && <span className="text-[22px] font-bold text-gray-900">Settings</span>}
+
+            {/* EXO Nodes — hidden on mobile */}
+            {!isMobile && <div className="flex flex-col gap-3">
               <div className="flex justify-between items-center">
                 <span className="text-sm font-semibold text-gray-900">EXO Nodes</span>
                 <div className="flex gap-2">
@@ -2940,10 +3015,10 @@
                   {checking ? 'Checking...' : 'Check Config'}
                 </button>
               </div>
-            </div>
+            </div>}
 
-            {/* Config Check Results */}
-            {configCheck && configCheck.nodes && (
+            {/* Config Check Results — hidden on mobile */}
+            {!isMobile && configCheck && configCheck.nodes && (
               <div className="bg-white border border-gray-200 rounded-xl">
                 <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Config Check Results</span>
@@ -2987,8 +3062,8 @@
               </div>
             )}
 
-            {/* EXO Endpoint */}
-            <div className="flex flex-col gap-2.5">
+            {/* EXO Endpoint — hidden on mobile */}
+            {!isMobile && <div className="flex flex-col gap-2.5">
               <span className="text-sm font-semibold text-gray-900">EXO Endpoint</span>
               <div className="flex gap-3 items-center">
                 <input type="text" value={exoIp} onChange={e => setExoIp(e.target.value)} placeholder="192.168.86.29"
@@ -3006,10 +3081,10 @@
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
 
-            {/* SSH */}
-            <div className="flex flex-col gap-2.5">
+            {/* SSH — hidden on mobile */}
+            {!isMobile && <div className="flex flex-col gap-2.5">
               <span className="text-sm font-semibold text-gray-900">SSH</span>
               <div className="flex gap-4">
                 <div className="flex flex-col gap-1 flex-1">
@@ -3023,10 +3098,10 @@
                     className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500" />
                 </div>
               </div>
-            </div>
+            </div>}
 
-            {/* OpenRouter */}
-            <div className="flex flex-col gap-2.5">
+            {/* OpenRouter — hidden on mobile */}
+            {!isMobile && <div className="flex flex-col gap-2.5">
               <span className="text-sm font-semibold text-gray-900">OpenRouter (optional cloud fallback)</span>
               <p className="text-xs text-gray-400">Add your OpenRouter API key to access cloud models alongside your local exo cluster.</p>
               <div className="flex gap-3 items-center">
@@ -3034,7 +3109,7 @@
                   placeholder="sk-or-..." className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[400px]" />
                 {openRouterKey && <span className="text-[11px] text-emerald-500">Key configured</span>}
               </div>
-            </div>
+            </div>}
 
             {/* Accessibility — TTS */}
             <div className="flex flex-col gap-3">
@@ -3272,8 +3347,8 @@
             </button>
           </div>
 
-          {/* About card */}
-          <div className="w-[260px] flex-shrink-0">
+          {/* About card — hidden on mobile */}
+          {!isMobile && <div className="w-[260px] flex-shrink-0">
             <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3.5">
               <span className="text-sm font-semibold text-gray-900">About</span>
               <div className="flex flex-col gap-2">
@@ -3286,7 +3361,7 @@
                 <a href="https://github.com/exo-explore/exo" target="_blank" className="text-xs text-indigo-500 hover:underline">↗ exo on GitHub</a>
               </div>
             </div>
-          </div>
+          </div>}
         </div>
       );
     }
@@ -3328,8 +3403,8 @@
       }
 
       return (
-        <div className="h-screen flex items-center justify-center bg-gray-50">
-          <form onSubmit={handleLogin} className="bg-white border border-gray-200 rounded-2xl p-8 w-[380px] flex flex-col gap-5 shadow-sm">
+        <div className="h-screen flex items-center justify-center bg-gray-50 px-4">
+          <form onSubmit={handleLogin} className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8 w-full max-w-[380px] flex flex-col gap-5 shadow-sm">
             <div className="flex flex-col items-center gap-2">
               <img src="logo.png" alt="" className="w-10 h-10" />
               <span className="text-xl font-bold text-gray-900">ExoScopy</span>
@@ -3436,6 +3511,18 @@
       function handleLogin(user) {
         setAuthState(prev => ({ ...prev, adminMode: true, user }));
       }
+
+      // Mobile navigation: custom events to hop between pages from per-page headers
+      useEffect(() => {
+        const goSettings = () => setPage('Settings');
+        const goChat = () => setPage('Chat');
+        window.addEventListener('exoscopy-go-settings', goSettings);
+        window.addEventListener('exoscopy-go-chat', goChat);
+        return () => {
+          window.removeEventListener('exoscopy-go-settings', goSettings);
+          window.removeEventListener('exoscopy-go-chat', goChat);
+        };
+      }, []);
 
       // Refresh guest token count periodically
       useEffect(() => {
