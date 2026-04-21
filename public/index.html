@@ -1302,8 +1302,8 @@
           {/* Chat area */}
           <div className="flex-1 flex flex-col bg-[#f9fafb]">
             {/* Chat header */}
-            <div className="flex items-center justify-between px-4 md:px-6 py-2 md:py-3 bg-white border-b border-gray-200 flex-shrink-0">
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between gap-2 px-4 md:px-6 py-2 md:py-3 bg-white border-b border-gray-200 flex-shrink-0">
+              <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
                 {/* Source toggle: exo / openrouter (only show if API key configured) */}
                 {settings?.openRouterApiKey && (
                   <div className="flex border border-gray-200 rounded-lg overflow-hidden mr-1">
@@ -1316,7 +1316,7 @@
                 {chatSource === 'openrouter' ? (
                   // OpenRouter: full grouped list (loading/unloading is on-demand, no "active" concept)
                   <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
-                    className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-[350px]">
+                    className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-full md:max-w-[350px]">
                     {modelGroups ? (
                       Object.entries(modelGroups).sort(([a],[b]) => a.localeCompare(b)).map(([group, gModels]) => (
                         <optgroup key={group} label={group.charAt(0).toUpperCase() + group.slice(1)}>
@@ -1331,13 +1331,13 @@
                 ) : (
                   // EXO: only show loaded (ready) models. To load/unload → exo Dashboard.
                   activeModels.length === 0 ? (
-                    <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-400 max-w-[350px]">
+                    <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-400 max-w-full md:max-w-[350px]">
                       No model loaded — use exo Dashboard to load one
                     </div>
                   ) : (
                     <select value={activeModels.includes(selectedModel) ? selectedModel : activeModels[0]}
                       onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
-                      className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-[350px]">
+                      className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none max-w-full md:max-w-[350px]">
                       {activeModels.map(id => {
                         const m = models.find(mm => mm.id === id);
                         return <option key={id} value={id}>⚡ {m?.vision ? '👁 ' : ''}{id}</option>;
@@ -1531,7 +1531,7 @@
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto">
-              <div className="max-w-[720px] mx-auto flex flex-col gap-5 py-6 px-4">
+              <div className="max-w-[720px] mx-auto flex flex-col gap-5 py-4 md:py-6 px-3 md:px-4 w-full">
                 {activeProjectFull && (
                   <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50 rounded-lg border border-indigo-100 mb-2">
                     <span className="text-sm">{activeProject?.icon}</span>
@@ -1548,8 +1548,8 @@
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.role === 'user' ? (
-                      <div className="relative group/user pl-10">
-                        <div className="max-w-[520px] px-4 py-3 bg-gray-100 rounded-2xl rounded-br-sm">
+                      <div className="relative group/user pl-0 md:pl-10 max-w-full">
+                        <div className="max-w-full md:max-w-[520px] px-4 py-3 bg-gray-100 rounded-2xl rounded-br-sm">
                           {Array.isArray(msg.content) ? (
                             <div className="flex flex-col gap-2">
                               {msg.content.map((part, pi) => {
@@ -1575,7 +1575,7 @@
                         )}
                       </div>
                     ) : (
-                      <div className="max-w-[600px] flex flex-col gap-2">
+                      <div className="max-w-full md:max-w-[600px] flex flex-col gap-2">
                         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm group/msg relative">
                           <div className="md-body text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: renderMd(msg.content) }} />
                           {!streaming && msg.content && (
@@ -1627,7 +1627,7 @@
                                   className="text-gray-400 hover:text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1">
                                   {Icons.copy('#9ca3af')}<span className="text-[10px]">Copy</span></button>
                               </div>
-                              <div className="grid grid-cols-4 gap-x-4 gap-y-1.5">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1.5">
                                 <div className="flex flex-col"><span className="text-gray-400">Total</span><span className="text-gray-700 font-medium">{s.totalTime?.toFixed(2)}s</span></div>
                                 <div className="flex flex-col"><span className="text-gray-400">TTFT</span><span className="text-amber-500 font-medium">{s.ttft?.toFixed(3)}s</span></div>
                                 <div className="flex flex-col"><span className="text-gray-400">Generation</span><span className="text-gray-700 font-medium">{s.genTime?.toFixed(2)}s</span></div>
