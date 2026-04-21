@@ -67,6 +67,13 @@
     .think-block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 8px 0; }
     .think-block summary { cursor: pointer; color: #9ca3af; font-style: italic; font-size: 0.85em; }
     .think-block .think-content { color: #6b7280; font-style: italic; font-size: 0.9em; margin-top: 8px; }
+    /* Mobile: prevent iOS Safari auto-zoom on input focus (triggers when font-size < 16px) */
+    @media (max-width: 767px) {
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+      textarea, select {
+        font-size: 16px !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -3424,7 +3431,7 @@
       }
 
       return (
-        <div className="h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="flex items-center justify-center bg-gray-50 px-4" style={{ height: '100dvh' }}>
           <form onSubmit={handleLogin} className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8 w-full max-w-[380px] flex flex-col gap-5 shadow-sm">
             <div className="flex flex-col items-center gap-2">
               <img src="logo.png" alt="" className="w-10 h-10" />
@@ -3559,7 +3566,7 @@
 
       // Auth loading
       if (!authState) return (
-        <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex items-center justify-center bg-gray-50" style={{ height: '100dvh' }}>
           <span className="text-sm text-gray-400">Loading...</span>
         </div>
       );
@@ -3570,7 +3577,7 @@
       const userRole = authState.user?.role || null;
 
       return (
-        <div className="h-screen flex flex-col">
+        <div className="flex flex-col" style={{ height: '100dvh' }}>
           <NavBar page={page} setPage={setPage} version={settings?.version} clusterStatus={clusterStatus}
             showHelp={showHelp} setShowHelp={setShowHelp}
             user={authState.user} onLogout={handleLogout} activeStreamCount={activeStreamCount} />
