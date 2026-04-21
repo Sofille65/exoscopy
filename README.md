@@ -4,18 +4,22 @@
 
 Web dashboard for [exo](https://github.com/exo-explore/exo) — the open-source distributed Apple Silicon inference framework.
 
-![ExoScopy](https://img.shields.io/badge/version-1.12.1-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
+![ExoScopy](https://img.shields.io/badge/version-1.13.6-yellow) ![License](https://img.shields.io/badge/license-MIT-green)
+
+Try it live: **[exoscopy.net](https://exoscopy.net)** (guest mode, no signup — Chat + Help only, token-limited)
 
 ## Features
 
 - **Chat** — stream responses with presets, file attachments, multi-turn editing, thinking mode, system prompts, stats, code block save
 - **Multimodal inference** — attach **images** or **PDFs** and use vision-capable models (Gemma 4, Qwen3-VL, Kimi K2.5). PDF text + page rasterization happens client-side, fully offline. Requires exo v1.0.70+.
+- **Mobile + PWA** — responsive layout at `<768px` (same URL, no separate build). Chat-focused interface with conversations drawer, 5 essential settings only. Installable as a PWA via "Add to Home Screen" → full-screen app experience on iOS/Android.
 - **Dashboard** — model matrix across nodes, load/unload, sync via rsync, delete, cluster monitoring (RAM, GPU, temp, SSD)
 - **Downloads** — search HuggingFace (exo qualified MLX models), smart cross-filters, distributed download (auto-rsync to all nodes)
 - **Settings** — node discovery, SSH key setup, config check (8 dependencies per node), endpoint test
 - **Multi-user** — administrator mode with login, per-user conversations, role-based access (admin/user/guest)
 - **Guest mode** — token-limited guest access for visitors, no login required
 - **Self-contained** — all UI dependencies (React, Tailwind, PDF parser) bundled in the Docker image. **No CDN calls at runtime**, works on air-gapped networks.
+- **Runs anywhere** — Mac, Linux, Raspberry Pi 5, NAS. The dashboard host doesn't need to be beefy — our demo at [exoscopy.net](https://exoscopy.net) runs on a Raspberry Pi 5, piloting a Mac Studio cluster over LAN.
 
 ---
 
@@ -137,6 +141,31 @@ Settings shows a live connection log with timestamp, username, action, and IP fo
 
 ---
 
+## Mobile
+
+ExoScopy adapts to mobile viewports (`<768px`) automatically — **same URL, no separate build, no app store**. Open `http://<your-host>:3456` on your phone and the layout switches:
+
+- **Chat** is the primary screen. Header is fixed (burger · ExoScopy · settings gear). Conversations open as a slide-in drawer.
+- **Model picker** sits on a dedicated row below the source toggle and inference preset — nothing gets truncated on iPhone 14/15 widths.
+- **Settings** are stripped to what makes sense on mobile: Accessibility, Administrator Mode, Guest Access, Connection Log, Users. Node management and cluster admin are desktop-only.
+- **Dashboard & Downloads** — desktop-only (these need the real estate and aren't useful from a phone).
+
+### Install as a PWA
+
+The app ships with a `manifest.json` + Apple meta tags. On iOS Safari or Android Chrome:
+
+1. Tap **Share** → **Add to Home Screen**
+2. Launch from the home icon → full-screen, no browser chrome
+3. Icon uses the ExoScopy brand yellow (`#ffde00`)
+
+No app store, no install flow, just a web shortcut that feels native.
+
+### Why not a native app?
+
+A native SwiftUI/Android app would need two codebases, App Store review cycles, and runs on top of the same HTTP API anyway. Responsive web + PWA gives you 90% of the native feel for 10% of the work and supports every phone. If you want tight iOS-only integrations later (Siri, Shortcuts, Watch), a native companion can be added separately without touching the web app.
+
+---
+
 ## Update
 
 ### Docker
@@ -192,6 +221,7 @@ Browser → ExoScopy (:3456) → exo cluster (:52415)
 | PDF | pdf.js 3.11.174 (client-side text extraction + rasterization) |
 | Auth | bcryptjs + cookie-session (signed cookies, no server-side store) |
 | Build | None — single `index.html`, no webpack/vite |
+| Mobile | Responsive `<768px` + PWA (`manifest.json`, Apple touch icon, `theme-color`, `viewport-fit=cover`) |
 | Persistence | JSON files in `data/` (Docker volume) |
 | Node comms | HTTP (exo API) + SSH (rsync, metrics, delete) |
 | Docker | `node:20-alpine` + openssh + sshpass + rsync |
