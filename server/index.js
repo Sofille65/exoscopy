@@ -1385,6 +1385,47 @@ function getChatEndpoint(engine) {
   return { base: `http://${ip}:${port}`, type: 'exo', apiKey: null };
 }
 
+/** Vision detection fallback for models where exo capabilities are missing/wrong. */
+function detectVisionFromName(id) {
+  const s = (id || '').toLowerCase();
+  return (
+    s.includes('vision') ||
+    s.includes('-vl-') || s.endsWith('-vl') || s.includes('/vl-') || s.includes('qwenvl') ||
+    s.includes('llava') ||
+    s.includes('gemma-4') || s.includes('gemma4') ||
+    s.includes('kimi-k2.5') || s.includes('kimi-vl') ||
+    s.includes('qwen3-vl') || s.includes('qwen-vl') ||
+    s.includes('internvl') || s.includes('intern-vl') ||
+    s.includes('pixtral') || s.includes('molmo')
+  );
+}
+
+/** Return sorted array of exo endpoint keys from settings.chat (exo1, exo2, ...). */
+function getExoEndpointKeys() {
+  const settings = getSettings();
+  const chat = settings.chat || {};
+  const keys = Object.keys(chat).filter(k => {
+    if (k === 'exo' && chat.exo1) return false;                // legacy 'exo' superseded by exo1
+    if (k.startsWith('inferencer')) return false;              // EXO-only
+    if (!chat[k]?.ip) return false;                            // must have IP configured
+    return true;
+  });
+  const order = (k) => {
+    const m = k.match(/^exo(\d+)$/);
+    return m ? parseInt(m[1]) : 999;
+  };
+  return keys.sort((a, b) => order(a) - order(b));
+}
+
+/** Return next available exoN key (exo1 if empty, else exo2, exo3, ...). */
+function nextExoKey() {
+  const settings = getSettings();
+  const chat = settings.chat || {};
+  let n = 1;
+  while (chat[`exo${n}`]) n++;
+  return `exo${n}`;
+}
+
 // GET /api/chat/engines — list configured EXO chat engines
 // Filters out legacy 'exo' key when exo1 exists, drops any inferencer keys.
 app.get('/api/chat/engines', (req, res) => {
@@ -1474,34 +1515,125 @@ app.get('/api/chat/models', async (req, res) => {
     clearTimeout(timer);
     if (!r.ok) return res.json({ engine, models: [], error: `HTTP ${r.status}` });
     const data = await r.json();
-    // Fallback vision detection from known model name patterns.
-    // exo v1.0.70+ tags capabilities, but not always correctly (e.g. Gemma 4).
-    const visionFromName = (id) => {
-      const s = (id || '').toLowerCase();
-      return (
-        s.includes('vision') ||
-        s.includes('-vl-') || s.endsWith('-vl') || s.includes('/vl-') || s.includes('qwenvl') ||
-        s.includes('llava') ||
-        s.includes('gemma-4') || s.includes('gemma4') ||
-        s.includes('kimi-k2.5') || s.includes('kimi-vl') ||
-        s.includes('qwen3-vl') || s.includes('qwen-vl') ||
-        s.includes('internvl') || s.includes('intern-vl') ||
-        s.includes('pixtral') || s.includes('molmo')
-      );
-    };
-
     const models = (data.data || [])
       .filter(m => ![...deletedModels].some(d => d.startsWith(`${m.id}::`)))
       .sort((a, b) => a.id.localeCompare(b.id))
       .map(m => ({
         id: m.id, name: m.id, family: m.family, quantization: m.quantization,
         capabilities: m.capabilities || [],
-        vision: (m.capabilities || []).includes('vision') || !!m.vision || visionFromName(m.id),
+        vision: (m.capabilities || []).includes('vision') || !!m.vision || detectVisionFromName(m.id),
       }));
     res.json({ engine, models });
   } catch (e) {
     res.json({ engine, models: [], error: e.message });
   }
+});
+
+// GET /api/chat/active-models/all — merged active models across all exo endpoints.
+// Returns [{ modelId, engineKey, endpointName, vision, family, quantization, capabilities }]
+// Duplicates (same modelId on multiple endpoints) are KEPT — user needs to see both.
+app.get('/api/chat/active-models/all', async (req, res) => {
+  const settings = getSettings();
+  const keys = getExoEndpointKeys();
+
+  const results = await Promise.all(keys.map(async (key) => {
+    const eng = getChatEndpoint(key);
+    if (!eng || eng.type !== 'exo') return [];
+    const endpointName = settings.chat?.[key]?.name || key.toUpperCase();
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const [stateRes, modelsRes] = await Promise.all([
+        fetch(`${eng.base}/state`, { signal: controller.signal }),
+        fetch(`${eng.base}/v1/models?status=downloaded`, { signal: controller.signal }).catch(() => null),
+      ]);
+      clearTimeout(timer);
+
+      const stateData = await stateRes.json();
+      const activeIds = [];
+      for (const inst of Object.values(stateData.instances || {})) {
+        const inner   = inst.MlxJacclInstance || inst.MlxInstance || Object.values(inst)[0];
+        const modelId = inner?.shardAssignments?.modelId;
+        if (modelId && !activeIds.includes(modelId)) activeIds.push(modelId);
+      }
+      if (activeIds.length === 0) return [];
+
+      // Try to enrich with metadata from /v1/models
+      let modelsList = [];
+      try { modelsList = modelsRes ? ((await modelsRes.json()).data || []) : []; } catch {}
+
+      return activeIds.map(modelId => {
+        const meta = modelsList.find(m => m.id === modelId) || {};
+        return {
+          modelId,
+          engineKey:   key,
+          endpointName,
+          vision:       (meta.capabilities || []).includes('vision') || !!meta.vision || detectVisionFromName(modelId),
+          family:       meta.family || null,
+          quantization: meta.quantization || null,
+          capabilities: meta.capabilities || [],
+        };
+      });
+    } catch (e) {
+      return [];
+    }
+  }));
+
+  res.json({ activeModels: results.flat() });
+});
+
+// POST /api/chat/endpoints — add a new satellite exo endpoint
+// Body: { name, ip, port? }. Auto-assigns next exoN key.
+app.post('/api/chat/endpoints', (req, res) => {
+  const current = getSettings();
+  if (current.adminMode && req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { name, ip, port } = req.body || {};
+  if (!ip || typeof ip !== 'string') return res.status(400).json({ error: 'ip required' });
+  const chat = { ...(current.chat || {}) };
+  const key = nextExoKey();
+  chat[key] = {
+    name: (name || '').trim() || `EXO ${key.replace('exo', '')}`,
+    ip:   ip.trim(),
+    port: Number(port) || 52415,
+  };
+  const updated = saveSettings({ ...current, chat });
+  res.json({ key, ...updated.chat[key] });
+});
+
+// PUT /api/chat/endpoints/:key — update an exo endpoint (name, ip, port)
+app.put('/api/chat/endpoints/:key', (req, res) => {
+  const current = getSettings();
+  if (current.adminMode && req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { key } = req.params;
+  const { name, ip, port } = req.body || {};
+  const chat = { ...(current.chat || {}) };
+  if (!chat[key]) return res.status(404).json({ error: `Unknown endpoint: ${key}` });
+  chat[key] = { ...chat[key] };
+  if (name !== undefined) chat[key].name = String(name).trim() || chat[key].name;
+  if (ip   !== undefined) chat[key].ip   = String(ip).trim();
+  if (port !== undefined) chat[key].port = Number(port) || chat[key].port;
+  const updated = saveSettings({ ...current, chat });
+  res.json({ key, ...updated.chat[key] });
+});
+
+// DELETE /api/chat/endpoints/:key — remove a satellite endpoint. Primary exo1 is protected.
+app.delete('/api/chat/endpoints/:key', (req, res) => {
+  const current = getSettings();
+  if (current.adminMode && req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const { key } = req.params;
+  if (key === 'exo1') return res.status(400).json({ error: 'Cannot delete primary endpoint (exo1)' });
+  const chat = { ...(current.chat || {}) };
+  if (!chat[key]) return res.status(404).json({ error: `Unknown endpoint: ${key}` });
+  delete chat[key];
+  saveSettings({ ...current, chat });
+  res.json({ ok: true, removed: key });
 });
 
 // POST /api/chat/cancel/:commandId — cancel an active generation via exo

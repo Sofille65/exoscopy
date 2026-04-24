@@ -607,11 +607,14 @@
       const [attachedFiles, setAttachedFiles] = useState([]);
       const [streaming, setStreaming] = useState(false);
       const [activeModel, setActiveModel] = useState(null);
-      const [activeModels, setActiveModels] = useState([]); // all currently loaded models
+      // activeModels is an array of { modelId, engineKey, endpointName, vision, family, ... }
+      // Duplicates (same modelId on multiple endpoints) are kept on purpose.
+      const [activeModels, setActiveModels] = useState([]);
       const [models, setModels] = useState([]);
       const [modelGroups, setModelGroups] = useState(null);
       const [chatSource, setChatSource] = useState('exo'); // 'exo' or 'openrouter'
       const [selectedModel, setSelectedModel] = useState('');
+      const [selectedEngine, setSelectedEngine] = useState('exo1'); // engineKey of selected model (exo1, exo2, ... or 'openrouter')
       const [preset, setPreset] = useState('normal');
       const [showSettings, setShowSettings] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
@@ -697,21 +700,38 @@
       useEffect(() => {
         const engineKey = chatSource === 'openrouter' ? 'openrouter' : 'exo1';
         setModels([]); setModelGroups(null);
+        // For exo: aggregate active models from ALL exo endpoints (primary + satellites).
+        // For openrouter: use the single cloud engine.
+        const activeFetch = chatSource === 'exo'
+          ? fetch('/api/chat/active-models/all').then(r => r.json()).then(d => d.activeModels || [])
+          : Promise.resolve([]);
         Promise.all([
           fetch(`/api/chat/models?engine=${engineKey}`).then(r => r.json()),
-          fetch('/api/chat/active-model?engine=exo1').then(r => r.json()),
-        ]).then(([modelsData, activeData]) => {
+          activeFetch,
+        ]).then(([modelsData, entries]) => {
           const modelList = modelsData.models || [];
           setModels(modelList);
           setModelGroups(modelsData.groups || null);
-          const actives = activeData.activeModels || (activeData.activeModel ? [activeData.activeModel] : []);
-          if (chatSource === 'exo') setActiveModels(actives); else setActiveModels([]);
-          if (chatSource === 'exo' && activeData.activeModel) {
-            setActiveModel(activeData.activeModel);
-            setSelectedModel(activeData.activeModel);
-            localStorage.setItem('exoscopy-last-model', activeData.activeModel);
+          if (chatSource === 'exo') {
+            setActiveModels(entries); // array of { modelId, engineKey, endpointName, vision, ... }
+            const firstEntry = entries[0] || null;
+            const firstModelId = firstEntry?.modelId || null;
+            setActiveModel(firstModelId);
+            // Prefer last-used model if it's still active somewhere
+            const lastModel = localStorage.getItem('exoscopy-last-model');
+            const lastEntry = lastModel ? entries.find(e => e.modelId === lastModel) : null;
+            if (lastEntry) {
+              setSelectedModel(lastEntry.modelId);
+              setSelectedEngine(lastEntry.engineKey);
+            } else if (firstEntry) {
+              setSelectedModel(firstEntry.modelId);
+              setSelectedEngine(firstEntry.engineKey);
+              localStorage.setItem('exoscopy-last-model', firstEntry.modelId);
+            }
           } else {
-            setActiveModel(chatSource === 'exo' ? (activeData.activeModel || null) : null);
+            setActiveModels([]);
+            setActiveModel(null);
+            setSelectedEngine('openrouter');
             const lastModel = localStorage.getItem(`exoscopy-last-model-${chatSource}`);
             if (lastModel && modelList.find(m => m.id === lastModel)) {
               setSelectedModel(lastModel);
@@ -965,7 +985,7 @@
 
       // Create new conversation (linked to active project if any)
       async function newConversation() {
-        const body = { engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel };
+        const body = { engine: chatSource === 'openrouter' ? 'openrouter' : (selectedEngine || 'exo1'), model: selectedModel };
         if (activeProjectId) body.projectId = activeProjectId;
         const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
         setConversations(prev => [{ ...conv, messageCount: 0, lastMessage: null }, ...prev]);
@@ -1079,7 +1099,7 @@
 
         let convId = activeConvId;
         if (!convId) {
-          const newConvBody = { engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel };
+          const newConvBody = { engine: chatSource === 'openrouter' ? 'openrouter' : (selectedEngine || 'exo1'), model: selectedModel };
           if (activeProjectId) newConvBody.projectId = activeProjectId;
           const conv = await fetch('/api/conversations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newConvBody) }).then(r => r.json());
           convId = conv.id;
@@ -1101,7 +1121,8 @@
 
         // Build request body
         const body = {
-          engine: chatSource === 'openrouter' ? 'openrouter' : 'exo1', model: selectedModel || undefined, messages: apiMessages, stream: true,
+          engine: chatSource === 'openrouter' ? 'openrouter' : (selectedEngine || 'exo1'),
+          model: selectedModel || undefined, messages: apiMessages, stream: true,
           conversationId: convId,
           temperature: params.temperature, max_tokens: params.maxTokens,
         };
@@ -1346,16 +1367,35 @@
                 <div className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 text-gray-400 w-full md:max-w-[350px]">
                   No model loaded — use exo Dashboard to load one
                 </div>
-              ) : (
-                <select value={activeModels.includes(selectedModel) ? selectedModel : activeModels[0]}
-                  onChange={e => { setSelectedModel(e.target.value); localStorage.setItem(`exoscopy-last-model-${chatSource}`, e.target.value); }}
-                  className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none w-full md:max-w-[350px]">
-                  {activeModels.map(id => {
-                    const m = models.find(mm => mm.id === id);
-                    return <option key={id} value={id}>⚡ {m?.vision ? '👁 ' : ''}{displayModelName(id)}</option>;
-                  })}
-                </select>
-              ));
+              ) : (() => {
+                // Each option is keyed by engineKey + modelId to allow duplicates across endpoints.
+                const selectValue = `${selectedEngine}::${selectedModel}`;
+                const hasCurrent = activeModels.some(e => e.engineKey === selectedEngine && e.modelId === selectedModel);
+                const fallback = activeModels[0];
+                const showEndpoint = activeModels.some((e, i) => activeModels.some((f, j) => i !== j && e.endpointName !== f.endpointName)); // show endpoint if multiple endpoints present
+                return (
+                  <select value={hasCurrent ? selectValue : (fallback ? `${fallback.engineKey}::${fallback.modelId}` : '')}
+                    onChange={e => {
+                      const [eng, ...rest] = e.target.value.split('::');
+                      const mid = rest.join('::');
+                      setSelectedEngine(eng);
+                      setSelectedModel(mid);
+                      localStorage.setItem('exoscopy-last-model', mid);
+                    }}
+                    className="mono text-xs font-medium border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-900 outline-none w-full md:max-w-[350px]">
+                    {activeModels.map(entry => {
+                      const m = models.find(mm => mm.id === entry.modelId);
+                      const isVision = entry.vision || m?.vision;
+                      const suffix = showEndpoint ? ` · ${entry.endpointName}` : '';
+                      return (
+                        <option key={`${entry.engineKey}::${entry.modelId}`} value={`${entry.engineKey}::${entry.modelId}`}>
+                          ⚡ {isVision ? '👁 ' : ''}{displayModelName(entry.modelId)}{suffix}
+                        </option>
+                      );
+                    })}
+                  </select>
+                );
+              })());
 
               const presetButtons = (
                 <div className="flex border border-gray-200 rounded-lg overflow-hidden flex-shrink-0">
@@ -2699,6 +2739,45 @@
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // SATELLITE EXO ENDPOINT ROW (used in Settings)
+    // ═══════════════════════════════════════════════════════════════════
+
+    function SatelliteEndpointRow({ sat, onSave, onRemove, onTest, testResult }) {
+      const [name, setName] = useState(sat.name);
+      const [ip, setIp]     = useState(sat.ip);
+      const [port, setPort] = useState(sat.port);
+      useEffect(() => { setName(sat.name); setIp(sat.ip); setPort(sat.port); }, [sat.key, sat.name, sat.ip, sat.port]);
+      const dirty = name !== sat.name || ip !== sat.ip || port !== sat.port;
+      return (
+        <div className="flex gap-2.5 items-center flex-wrap">
+          <span className="mono text-[11px] text-gray-400 w-[40px]">{sat.key}</span>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Name"
+            className="text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[140px]" />
+          <input type="text" value={ip} onChange={e => setIp(e.target.value)} placeholder="192.168.1.100"
+            className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[160px]" />
+          <span className="text-gray-400">:</span>
+          <input type="number" value={port} onChange={e => setPort(parseInt(e.target.value) || 52415)}
+            className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[80px]" />
+          <button onClick={onTest} className="px-3 py-2 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-50">Test</button>
+          {testResult && (
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${testResult === 'connected' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <span className={`text-xs ${testResult === 'connected' ? 'text-emerald-600' : 'text-red-600'}`}>
+                {testResult === 'connected' ? 'OK' : 'Fail'}
+              </span>
+            </div>
+          )}
+          {dirty && (
+            <button onClick={() => onSave({ name, ip, port })}
+              className="px-3 py-2 bg-indigo-500 text-white rounded-lg text-xs font-medium hover:bg-indigo-600">Save</button>
+          )}
+          <button onClick={onRemove}
+            className="px-3 py-2 text-xs text-red-500 hover:text-red-700 ml-auto">Remove</button>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // SETTINGS PAGE
     // ═══════════════════════════════════════════════════════════════════
 
@@ -2707,6 +2786,61 @@
       const [exoIp, setExoIp] = useState(settings?.chat?.exo1?.ip || '');
       const [exoPort, setExoPort] = useState(settings?.chat?.exo1?.port || 52415);
       const [sshUser, setSshUser] = useState(settings?.sshUser || 'admin');
+      // Satellite EXO endpoints (exo2, exo3, ...) — everything in chat.* except primary exo1
+      const [satellites, setSatellites]        = useState([]);
+      const [newSatName, setNewSatName]        = useState('');
+      const [newSatIp,   setNewSatIp]          = useState('');
+      const [newSatPort, setNewSatPort]        = useState(52415);
+      const [satTestResults, setSatTestResults] = useState({});
+      useEffect(() => {
+        const chat = settings?.chat || {};
+        const sats = Object.entries(chat)
+          .filter(([k]) => k !== 'exo1' && k !== 'exo' && !k.startsWith('inferencer'))
+          .map(([k, v]) => ({ key: k, name: v.name || k, ip: v.ip || '', port: v.port || 52415 }))
+          .sort((a, b) => {
+            const na = parseInt((a.key.match(/^exo(\d+)$/) || [])[1] || '999');
+            const nb = parseInt((b.key.match(/^exo(\d+)$/) || [])[1] || '999');
+            return na - nb;
+          });
+        setSatellites(sats);
+      }, [settings]);
+      async function addSatellite() {
+        if (!newSatIp.trim()) return;
+        try {
+          const r = await fetch('/api/chat/endpoints', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newSatName.trim(), ip: newSatIp.trim(), port: newSatPort }),
+          });
+          if (!r.ok) return;
+          setNewSatName(''); setNewSatIp(''); setNewSatPort(52415);
+          refreshSettings();
+        } catch {}
+      }
+      async function updateSatellite(key, updates) {
+        try {
+          const r = await fetch(`/api/chat/endpoints/${key}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+          });
+          if (r.ok) refreshSettings();
+        } catch {}
+      }
+      async function removeSatellite(key) {
+        if (!confirm(`Remove satellite endpoint ${key}?`)) return;
+        try {
+          const r = await fetch(`/api/chat/endpoints/${key}`, { method: 'DELETE' });
+          if (r.ok) refreshSettings();
+        } catch {}
+      }
+      async function testSatellite(key) {
+        setSatTestResults(prev => ({ ...prev, [key]: null }));
+        try {
+          const r = await fetch(`/api/chat/active-model?engine=${key}`, { signal: AbortSignal.timeout(6000) });
+          setSatTestResults(prev => ({ ...prev, [key]: r.ok ? 'connected' : 'failed' }));
+        } catch {
+          setSatTestResults(prev => ({ ...prev, [key]: 'failed' }));
+        }
+      }
       const [newNodeName, setNewNodeName] = useState('');
       const [newNodeIp, setNewNodeIp] = useState('');
       const [newNodeRam, setNewNodeRam] = useState('');
@@ -3092,9 +3226,9 @@
               </div>
             )}
 
-            {/* EXO Endpoint — hidden on mobile */}
+            {/* EXO Endpoint (Primary) — hidden on mobile */}
             {!isMobile && <div className="flex flex-col gap-2.5">
-              <span className="text-sm font-semibold text-gray-900">EXO Endpoint</span>
+              <span className="text-sm font-semibold text-gray-900">EXO Endpoint <span className="text-[11px] text-gray-400 font-normal ml-1">Primary · exo1</span></span>
               <div className="flex gap-3 items-center">
                 <input type="text" value={exoIp} onChange={e => setExoIp(e.target.value)} placeholder="192.168.86.29"
                   className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[200px]" />
@@ -3110,6 +3244,43 @@
                     </span>
                   </div>
                 )}
+              </div>
+            </div>}
+
+            {/* Satellite EXO endpoints — hidden on mobile */}
+            {!isMobile && <div className="flex flex-col gap-2.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-sm font-semibold text-gray-900">Satellite EXO endpoints</span>
+                <span className="text-xs text-gray-400">Their active models appear in the chat picker alongside primary.</span>
+              </div>
+
+              {satellites.length === 0 && (
+                <div className="text-xs text-gray-400 italic px-1">No satellites configured — add one below to combine models from another exo cluster.</div>
+              )}
+
+              {satellites.map(sat => (
+                <SatelliteEndpointRow
+                  key={sat.key}
+                  sat={sat}
+                  testResult={satTestResults[sat.key]}
+                  onSave={(updates) => updateSatellite(sat.key, updates)}
+                  onRemove={() => removeSatellite(sat.key)}
+                  onTest={() => testSatellite(sat.key)}
+                />
+              ))}
+
+              {/* Add row */}
+              <div className="flex gap-2.5 items-center flex-wrap pt-2 border-t border-gray-100">
+                <span className="mono text-[11px] text-gray-400 w-[40px]">new</span>
+                <input type="text" value={newSatName} onChange={e => setNewSatName(e.target.value)} placeholder="Name (e.g. Office)"
+                  className="text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[140px]" />
+                <input type="text" value={newSatIp} onChange={e => setNewSatIp(e.target.value)} placeholder="192.168.1.100"
+                  className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[160px]" />
+                <span className="text-gray-400">:</span>
+                <input type="number" value={newSatPort} onChange={e => setNewSatPort(parseInt(e.target.value) || 52415)}
+                  className="mono text-[13px] px-3 py-2 border border-gray-200 rounded-lg bg-white w-[80px]" />
+                <button onClick={addSatellite} disabled={!newSatIp.trim()}
+                  className="px-3.5 py-2 bg-indigo-500 text-white rounded-lg text-xs font-medium hover:bg-indigo-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">+ Add satellite</button>
               </div>
             </div>}
 
