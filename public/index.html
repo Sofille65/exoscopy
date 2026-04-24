@@ -2962,10 +2962,15 @@
       }
 
       async function save() {
+        // Preserve existing chat entries (satellites exo2, exo3, ...) — only update primary exo1
+        const existingChat = settings?.chat || {};
         const updated = {
           ...settings,
           nodes,
-          chat: { exo1: { name: 'EXO', ip: exoIp, port: exoPort } },
+          chat: {
+            ...existingChat,
+            exo1: { name: existingChat.exo1?.name || 'EXO', ip: exoIp, port: exoPort },
+          },
           sshUser,
           openRouterApiKey: openRouterKey,
           setupComplete: nodes.length > 0,
@@ -3049,8 +3054,16 @@
 
       async function testEndpoint() {
         try {
-          // Save current endpoint first so backend uses it
-          const updated = { ...settings, chat: { exo1: { name: 'EXO', ip: exoIp, port: exoPort } }, sshUser };
+          // Save current primary endpoint first so backend uses it — preserve satellites
+          const existingChat = settings?.chat || {};
+          const updated = {
+            ...settings,
+            chat: {
+              ...existingChat,
+              exo1: { name: existingChat.exo1?.name || 'EXO', ip: exoIp, port: exoPort },
+            },
+            sshUser,
+          };
           await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
           // Test via backend proxy (avoids CORS)
           const res = await fetch('/api/chat/active-model?engine=exo1');
